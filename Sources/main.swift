@@ -16,9 +16,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let breakReminder = BreakReminderPanel()
 
     private var statusItem: NSStatusItem!
-    private var menuBarIconPanel: NSPanel?
-    private var menuBarIconView: MenuBarIconView?
-    private var menuBarIconMenu: NSMenu?
     private var overlayWindows: [NSWindow] = []
     private var renderTimer: Timer?
     private var logicTimer: Timer?
@@ -214,8 +211,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             lastProgressReminderMark = progressMark
             breakReminder.showProgress(remaining: clock.remaining)
         }
-        menuBarIconView?.needsDisplay = true
-
         if clock.elapsed >= clock.interval {
             let remaining = clock.breakRemaining(now: now, idleTime: idleTime)
             if hasShownBreakReminder {
@@ -312,7 +307,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func screensChanged() {
         rebuildOverlayWindows()
-        positionMenuBarIconPanel()
     }
 
     private func rebuildOverlayWindows() {
@@ -366,60 +360,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let menu = NSMenu()
         menu.delegate = self
         statusItem.menu = menu
-        setUpMenuBarIconPanel()
-    }
-
-    private func setUpMenuBarIconPanel() {
-        guard !isUIPreview else { return }
-
-        let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 24, height: 24),
-            styleMask: [.borderless, .nonactivatingPanel],
-            backing: .buffered,
-            defer: false
-        )
-        panel.backgroundColor = .clear
-        panel.isOpaque = false
-        panel.hasShadow = false
-        panel.level = .statusBar
-        panel.hidesOnDeactivate = false
-        panel.ignoresMouseEvents = false
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
-        panel.isReleasedWhenClosed = false
-
-        let view = MenuBarIconView(frame: NSRect(x: 0, y: 0, width: 24, height: 24))
-        view.delegate = self
-        view.weightProvider = { [weak self] in self?.clock.weight ?? 0 }
-        view.toolTip = "Gravtail · Click for settings"
-        panel.contentView = view
-
-        let menu = NSMenu()
-        menu.delegate = self
-        menuBarIconMenu = menu
-        menuBarIconPanel = panel
-        menuBarIconView = view
-        positionMenuBarIconPanel()
-        panel.orderFrontRegardless()
-    }
-
-    private func positionMenuBarIconPanel() {
-        guard let panel = menuBarIconPanel,
-              let screen = NSScreen.main ?? NSScreen.screens.first else { return }
-
-        let area = screen.auxiliaryTopRightArea
-        let x: CGFloat
-        let y: CGFloat
-        if let area, area.width > 0 {
-            x = area.minX + 6
-            y = area.minY + 2
-        } else {
-            x = screen.frame.maxX - 120
-            y = screen.frame.maxY - 28
-        }
-        panel.setFrame(
-            NSRect(x: x, y: y, width: 24, height: 24),
-            display: true
-        )
     }
 
     func menuNeedsUpdate(_ menu: NSMenu) {
@@ -586,17 +526,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private static func format(_ interval: TimeInterval) -> String {
         let seconds = max(0, Int(ceil(interval)))
         return String(format: "%02d:%02d", seconds / 60, seconds % 60)
-    }
-}
-
-extension AppDelegate: MenuBarIconDelegate {
-    func menuBarIconPressed(from view: NSView) {
-        guard let menu = menuBarIconMenu else { return }
-        menu.popUp(
-            positioning: nil,
-            at: NSPoint(x: view.bounds.midX, y: view.bounds.minY - 4),
-            in: view
-        )
     }
 }
 

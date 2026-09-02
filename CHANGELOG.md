@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.2
+
+- Removed the duplicate floating menu-bar icon that appeared near the system
+  clock. Gravtail now uses one standard macOS status item, with its menu and
+  click target managed by the system.
+
 ## 0.4.1
 
 - Fixed a first-run Accessibility race that could make the pointer appear stuck

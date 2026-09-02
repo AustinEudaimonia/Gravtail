@@ -1,9 +1,5 @@
 import Cocoa
 
-protocol MenuBarIconDelegate: AnyObject {
-    func menuBarIconPressed(from view: NSView)
-}
-
 enum HeavyCursorIconRenderer {
     private static let masterImage: NSImage? = {
         guard let url = Bundle.main.url(forResource: "HeavyCursorIconMaster", withExtension: "png") else {
@@ -113,23 +109,4 @@ enum HeavyCursorIconRenderer {
         NSColor(srgbRed: 1, green: 0.63 + 0.08 * clampedWeight, blue: 0.28, alpha: 1).setFill()
         NSBezierPath(ovalIn: head).fill()
     }
-}
-
-final class MenuBarIconView: NSView {
-    weak var delegate: MenuBarIconDelegate?
-    var weightProvider: () -> CGFloat = { 0 }
-
-    override var isFlipped: Bool { false }
-
-    override func draw(_ dirtyRect: NSRect) {
-        HeavyCursorIconRenderer.draw(in: bounds, weight: weightProvider())
-    }
-
-    override func mouseDown(with event: NSEvent) {
-        delegate?.menuBarIconPressed(from: self)
-    }
-
-    override func accessibilityRole() -> NSAccessibility.Role? { .button }
-    override func accessibilityLabel() -> String? { "Gravtail settings" }
-    override func accessibilityHelp() -> String? { "Open Gravtail settings" }
 }
