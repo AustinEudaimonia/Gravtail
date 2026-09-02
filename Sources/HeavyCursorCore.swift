@@ -3,6 +3,13 @@ import CoreGraphics
 
 enum HeavyCursorConstants {
     static let minimumGain: CGFloat = 0.10
+    /// Do not install a global event tap for imperceptible changes. Keeping
+    /// the tap off until the cursor is meaningfully heavy avoids touching
+    /// pointer events during first-run Accessibility setup.
+    static let pointerTapActivationWeight: CGFloat = 0.05
+    /// At this gain the warp would be effectively identical to the incoming
+    /// cursor position. Skipping it avoids unnecessary cursor re-association.
+    static let pointerWarpGainThreshold: CGFloat = 0.995
 }
 
 enum ReminderSchedule {

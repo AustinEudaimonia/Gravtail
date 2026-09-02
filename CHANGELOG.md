@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.1
+
+- Fixed a first-run Accessibility race that could make the pointer appear stuck
+  immediately after permission was granted.
+- Delayed the global pointer event tap until the cursor is meaningfully heavy,
+  skipped no-op cursor warps at near-100% gain, and restored pointer state
+  synchronously when changing settings or resetting a session.
+
 ## 0.4.0
 
 - Renamed the public app and release artifacts to **Gravtail** while preserving

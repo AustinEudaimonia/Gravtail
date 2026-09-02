@@ -99,6 +99,13 @@ final class PointerWeightController {
         }
 
         let gain = max(HeavyCursorConstants.minimumGain, min(1, gainProvider()))
+        if gain >= HeavyCursorConstants.pointerWarpGainThreshold {
+            // The event tap may briefly be active as the weight curve starts,
+            // but a nearly-one gain does not need a system-level warp. Avoid
+            // re-associating the cursor for ordinary, unweighted movement.
+            lastOutputLocation = incoming
+            return
+        }
         let deltaX = incoming.x - previous.x
         let deltaY = incoming.y - previous.y
         let output = CGPoint(

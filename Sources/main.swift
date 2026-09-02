@@ -228,8 +228,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
         }
 
-        if !isUIPreview && pointerController.isTrusted {
-            // Starting is idempotent only when permission has just become available.
+        let shouldRunPointerWeight = !isUIPreview
+            && pointerController.isTrusted
+            && clock.weight > HeavyCursorConstants.pointerTapActivationWeight
+
+        if shouldRunPointerWeight {
+            // Do not install the global event tap during onboarding or while
+            // the pointer is still effectively weightless. This is important
+            // during the first Accessibility grant, when System Settings is
+            // being controlled by the mouse at the same time.
             if !pointerTapIsActive {
                 pointerTapIsActive = pointerController.start()
             }
@@ -245,7 +252,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // granted Accessibility and the event tap is actually running. This
         // keeps the permission promise honest and immediately restores the
         // system values if permission is revoked or the tap cannot start.
-        if !isUIPreview && pointerController.isTrusted && pointerTapIsActive {
+        if shouldRunPointerWeight && pointerTapIsActive {
             hidAccelerationController.update(weight: clock.weight)
         } else {
             _ = hidAccelerationController.restore()
@@ -545,6 +552,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func resetSession() {
+        // Resetting from the menu can happen while the event tap is active.
+        // Restore synchronously so the next pointer event is never processed
+        // by a stale weighting transform.
+        restoreHardware()
         clock.reset()
         CometModel.shared.clear()
         needsFinalClear = true
@@ -563,6 +574,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func startPointerWeightIfPossible() {
+        guard !isUIPreview,
+              pointerController.isTrusted,
+              clock.weight > HeavyCursorConstants.pointerTapActivationWeight else {
+            pointerTapIsActive = false
+            return
+        }
         pointerTapIsActive = pointerController.start()
     }
 
