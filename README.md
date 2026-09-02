@@ -1,5 +1,51 @@
 # Gravtail
 
+> 让你的光标知道：你已经坐太久了。
+
+<p align="center">
+  <img src="Resources/HeavyCursorIconMaster.png" alt="Gravtail comet icon" width="180" />
+</p>
+
+Gravtail 是一个轻量的 macOS 菜单栏应用。它不靠突然弹出的系统通知打断你，而是把“久坐时间”变成光标本身的环境反馈：使用电脑越久，光标后的 comet（彗尾）越长、越粗，鼠标响应也会逐渐变重；起身离开一段时间后，光标恢复轻盈。
+
+## 为什么要做 Gravtail
+
+传统久坐提醒往往在某个瞬间弹出一条通知，把人从正在做的事情里拽出来。Gravtail 选择了另一种方式：
+
+- **提醒融入正在使用的对象**：光标一直在屏幕上，不需要额外的弹窗或健康面板。
+- **变化是渐进的**：你会先看到很轻的 comet，越接近设定时间，轨迹越明显，身体可以自然形成“变重了，该起来走走”的反馈。
+- **保持克制**：没有 TODO、打卡、排行榜或生产力评分，核心只做一件事——帮助你离开椅子。
+
+## 核心交互
+
+| 连续使用时间 | 视觉反馈 | 鼠标响应 |
+| --- | --- | --- |
+| 前半段 | 光标保持安静 | 保持原始灵敏度 |
+| 后半段 | comet 平滑变长、变粗，颜色逐渐变暖 | 逐步降低加速度 |
+| 达到设定时间 | 顶部居中的小胶囊提示起身 | 达到最重状态，最低约为原响应的 10% |
+| 完成休息 | comet 和重量逐渐清除 | 恢复启动前保存的原始设置 |
+
+你可以选择 **45 / 60 / 90 分钟**的连续使用时间，以及 **3 / 5 / 10 分钟**的休息时长。每 15 分钟，屏幕上方会出现一个短暂的小胶囊，告诉你距离起身还剩多久；到点后胶囊会显示休息倒计时。键盘或鼠标输入会重新开始休息倒计时，完整休息后进入下一轮。
+
+## 视觉语言
+
+Gravtail 的视觉元素都围绕“重量正在增加”这一件事：
+
+```text
+轻盈       ·  ·  ·        ───────────────▶       加重
+短而清澈的 comet                                  长而厚的 comet
+```
+
+- **Comet 光标**：轨迹长度、粗细和下坠感连续变化，不是几个突兀的档位。
+- **顶部胶囊**：位于主屏幕上方居中、避开菜单栏和底部语音工具，只显示当前真正需要知道的信息。
+- **菜单栏图标**：随时查看下一次起身时间，修改工作/休息时长、Reset Session 或 Quit。
+
+## 灵感与开源致谢
+
+Gravtail 的透明多显示器 overlay、全局光标轨迹和 comet 渲染思路，借鉴了 GitHub 上的 [MouseTrail](https://github.com/changymon/MouseTrail) 项目（Reggie Chang，MIT License）。
+
+我们没有把 MouseTrail 原样复制成一个鼠标特效工具，而是沿用了它“在光标附近绘制轻量视觉层”的技术基础，把它改造成一个以久坐提醒为核心的产品：**轨迹不是为了装饰，而是用来表达光标正在变重。** 具体许可和第三方声明见 [LICENSE](LICENSE) 与 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+
 A deliberately small macOS menu bar app: the longer you use your Mac, the heavier its comet cursor becomes. Step away for the selected break duration and it becomes light again.
 
 ## Core behavior
