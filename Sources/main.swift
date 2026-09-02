@@ -15,7 +15,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let hidAccelerationController = HIDAccelerationController()
     private let breakReminder = BreakReminderPanel()
 
-    private var statusItem: NSStatusItem!
+    private var menuBarIconPanel: NSPanel?
+    private var menuBarIconView: MenuBarIconView?
+    private var menuBarIconMenu: NSMenu?
     private var overlayWindows: [NSWindow] = []
     private var renderTimer: Timer?
     private var logicTimer: Timer?
@@ -46,7 +48,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         terminateOtherInstances()
         NSApp.setActivationPolicy(isUIPreview ? .regular : .accessory)
-        setUpStatusItem()
+        setUpMenuBarIcon()
         if !isUIPreview {
             rebuildOverlayWindows()
         }
@@ -307,6 +309,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func screensChanged() {
         rebuildOverlayWindows()
+        positionMenuBarIconPanel()
     }
 
     private func rebuildOverlayWindows() {
@@ -343,23 +346,70 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
-    private func setUpStatusItem() {
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        // Keep a stable identity so macOS can remember the item after the user
-        // moves it.
-        statusItem.autosaveName = "HeavyCursorStatusItem"
-        statusItem.isVisible = true
-        if let button = statusItem.button {
-            button.image = HeavyCursorIconRenderer.makeImage(size: NSSize(width: 18, height: 18))
-            button.title = ""
-            button.imagePosition = .imageOnly
-            button.imageScaling = .scaleProportionallyDown
-            button.toolTip = "Gravtail · Click for settings"
-            button.setAccessibilityLabel("Gravtail settings")
-        }
+    private func setUpMenuBarIcon() {
+        guard !isUIPreview else { return }
+
+        // Do not use an NSStatusItem here. The system may hide/reorder one
+        // without exposing that state to the app, which was the reason the
+        // Gravtail icon could disappear completely for some users. A single
+        // status-bar-level panel is deterministic, works over full-screen
+        // apps, and cannot create a second icon in the overflow area.
+        let panel = NSPanel(
+            contentRect: NSRect(x: 0, y: 0, width: 28, height: 28),
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        panel.backgroundColor = .clear
+        panel.isOpaque = false
+        panel.hasShadow = false
+        panel.level = .statusBar
+        panel.hidesOnDeactivate = false
+        panel.ignoresMouseEvents = false
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+        panel.isReleasedWhenClosed = false
+
+        let view = MenuBarIconView(frame: NSRect(x: 0, y: 0, width: 28, height: 28))
+        view.delegate = self
+        view.weightProvider = { [weak self] in self?.clock.weight ?? 0 }
+        view.toolTip = "Gravtail · Click for settings"
+        panel.contentView = view
+
         let menu = NSMenu()
         menu.delegate = self
-        statusItem.menu = menu
+        menuBarIconMenu = menu
+        menuBarIconPanel = panel
+        menuBarIconView = view
+        positionMenuBarIconPanel()
+        panel.orderFrontRegardless()
+    }
+
+    private func positionMenuBarIconPanel() {
+        guard let panel = menuBarIconPanel,
+              let screen = NSScreen.main ?? NSScreen.screens.first else { return }
+
+        let frame = screen.frame
+        let visible = screen.visibleFrame
+        let menuBarHeight = max(0, frame.maxY - visible.maxY)
+        let panelSize = panel.frame.size
+        let y: CGFloat
+        if menuBarHeight >= 18 {
+            // Center vertically inside the actual menu-bar strip.
+            y = visible.maxY + (menuBarHeight - panelSize.height) / 2
+        } else {
+            // Full-screen apps can remove the menu bar from visibleFrame. Keep
+            // the control at the top edge so it remains discoverable.
+            y = frame.maxY - panelSize.height - 4
+        }
+        panel.setFrame(
+            NSRect(
+                x: frame.midX - panelSize.width / 2,
+                y: y,
+                width: panelSize.width,
+                height: panelSize.height
+            ),
+            display: true
+        )
     }
 
     func menuNeedsUpdate(_ menu: NSMenu) {
@@ -526,6 +576,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private static func format(_ interval: TimeInterval) -> String {
         let seconds = max(0, Int(ceil(interval)))
         return String(format: "%02d:%02d", seconds / 60, seconds % 60)
+    }
+}
+
+extension AppDelegate: MenuBarIconDelegate {
+    func menuBarIconPressed(from view: NSView) {
+        guard let menu = menuBarIconMenu else { return }
+        menu.popUp(
+            positioning: nil,
+            at: NSPoint(x: view.bounds.midX, y: view.bounds.minY - 4),
+            in: view
+        )
     }
 }
 

@@ -1,10 +1,17 @@
 # Changelog
 
+## 0.4.3
+
+- Replaced the system-managed status item with one deterministic, clickable
+  Gravtail mark centered in the menu-bar strip. This prevents macOS from
+  placing the icon in an invisible overflow slot and keeps it discoverable in
+  full-screen apps without creating a duplicate icon.
+
 ## 0.4.2
 
 - Removed the duplicate floating menu-bar icon that appeared near the system
-  clock. Gravtail now uses one standard macOS status item, with its menu and
-  click target managed by the system.
+  clock. Gravtail now owns one top-center menu-bar control, with its menu and
+  click target managed by the app.
 
 ## 0.4.1
 

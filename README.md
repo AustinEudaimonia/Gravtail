@@ -38,7 +38,7 @@ Gravtail 的视觉元素都围绕“重量正在增加”这一件事：
 
 - **Comet 光标**：轨迹长度、粗细和下坠感连续变化，不是几个突兀的档位。
 - **顶部胶囊**：位于主屏幕上方居中、避开菜单栏和底部语音工具，只显示当前真正需要知道的信息。
-- **菜单栏图标**：随时查看下一次起身时间，修改工作/休息时长、Reset Session 或 Quit。
+- **顶部菜单栏图标**：一个固定在屏幕上方居中的 Gravtail 小图标，随时查看下一次起身时间，修改工作/休息时长、Reset Session 或 Quit。
 
 ## 灵感与开源致谢
 
@@ -57,7 +57,7 @@ A deliberately small macOS menu bar app: the longer you use your Mac, the heavie
 - Every 15 minutes, a four-second pill reports how long remains before it is time to move.
 - At the selected limit, the pill stays visible with a live break countdown and Quit action.
 - Pills sit at the upper center of the main screen, below the menu bar and away from bottom-center voice tools such as Typeless.
-- A small notch-safe comet/cursor icon sits in the top menu-bar area and opens work and break settings, Reset Session, and Quit.
+- A single small comet/cursor icon is pinned to the top-center menu-bar strip and opens work and break settings, Reset Session, and Quit. It remains visible over full-screen apps and never relies on the system's hidden status-item overflow.
 - Any keyboard or pointer input restarts the break countdown.
 - Completing the break restores the original pointer response and starts a new session.
 - Reset or quit at any time from the menu bar.
