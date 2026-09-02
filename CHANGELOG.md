@@ -1,11 +1,18 @@
 # Changelog
 
+## 0.4.4
+
+- Fixed the top menu-bar control being hidden under the camera notch on
+  MacBook displays. Gravtail now selects the nearest notch-safe slot beside
+  the notch while remaining visually centered.
+
 ## 0.4.3
 
 - Replaced the system-managed status item with one deterministic, clickable
-  Gravtail mark centered in the menu-bar strip. This prevents macOS from
+  Gravtail mark centered in the notch-safe menu-bar strip. This prevents macOS from
   placing the icon in an invisible overflow slot and keeps it discoverable in
-  full-screen apps without creating a duplicate icon.
+  full-screen apps without creating a duplicate icon. On MacBook displays the
+  mark is placed immediately beside the camera notch instead of underneath it.
 
 ## 0.4.2
 

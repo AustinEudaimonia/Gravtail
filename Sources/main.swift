@@ -392,19 +392,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let visible = screen.visibleFrame
         let menuBarHeight = max(0, frame.maxY - visible.maxY)
         let panelSize = panel.frame.size
-        let y: CGFloat
-        if menuBarHeight >= 18 {
-            // Center vertically inside the actual menu-bar strip.
-            y = visible.maxY + (menuBarHeight - panelSize.height) / 2
+        let origin: NSPoint
+
+        // MacBook screens reserve a notch-sized hole in the middle of the
+        // menu bar. The old exact-center placement was therefore technically
+        // on-screen but physically hidden behind the camera/notch. Prefer the
+        // notch-safe slot nearest the center, immediately beside that hole.
+        if let left = screen.auxiliaryTopLeftArea,
+           let right = screen.auxiliaryTopRightArea,
+           left.width >= panelSize.width + 8,
+           right.width >= panelSize.width + 8 {
+            let leftX = left.maxX - panelSize.width - 8
+            let rightX = right.minX + 8
+            let leftDistance = abs((leftX + panelSize.width / 2) - frame.midX)
+            let rightDistance = abs((rightX + panelSize.width / 2) - frame.midX)
+            let x = leftDistance <= rightDistance ? leftX : rightX
+            let area = leftDistance <= rightDistance ? left : right
+            origin = NSPoint(
+                x: x,
+                y: area.minY + (area.height - panelSize.height) / 2
+            )
+        } else if menuBarHeight >= 18 {
+            // On a non-notch display, center vertically inside the actual
+            // menu-bar strip.
+            origin = NSPoint(
+                x: frame.midX - panelSize.width / 2,
+                y: visible.maxY + (menuBarHeight - panelSize.height) / 2
+            )
         } else {
             // Full-screen apps can remove the menu bar from visibleFrame. Keep
             // the control at the top edge so it remains discoverable.
-            y = frame.maxY - panelSize.height - 4
+            origin = NSPoint(
+                x: frame.midX - panelSize.width / 2,
+                y: frame.maxY - panelSize.height - 4
+            )
         }
         panel.setFrame(
             NSRect(
-                x: frame.midX - panelSize.width / 2,
-                y: y,
+                x: origin.x,
+                y: origin.y,
                 width: panelSize.width,
                 height: panelSize.height
             ),
