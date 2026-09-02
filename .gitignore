@@ -1,0 +1,7 @@
+.build/
+.swiftpm/
+DerivedData/
+dist/*.zip
+dist/*SHA256SUMS.txt
+*.dSYM/
+.DS_Store

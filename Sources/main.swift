@@ -1,0 +1,607 @@
+import Cocoa
+import ApplicationServices
+
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
+    private let settings = UserDefaults.standard
+    private let isFortyFiveMinutePreview = ProcessInfo.processInfo.arguments.contains("--preview-45")
+    private let isProgressPreview = ProcessInfo.processInfo.arguments.contains("--preview-progress")
+    private let isUIPreview = ProcessInfo.processInfo.arguments.contains("--preview-ui")
+    private var isAnyPreview: Bool { isFortyFiveMinutePreview || isProgressPreview || isUIPreview }
+    private lazy var clock = SessionClock(
+        interval: isAnyPreview ? 45 * 60 : selectedInterval,
+        breakDuration: selectedBreakDuration
+    )
+    private let pointerController = PointerWeightController()
+    private let hidAccelerationController = HIDAccelerationController()
+    private let breakReminder = BreakReminderPanel()
+
+    private var statusItem: NSStatusItem!
+    private var menuBarIconPanel: NSPanel?
+    private var menuBarIconView: MenuBarIconView?
+    private var menuBarIconMenu: NSMenu?
+    private var overlayWindows: [NSWindow] = []
+    private var renderTimer: Timer?
+    private var logicTimer: Timer?
+    private var needsFinalClear = false
+    private var hasShownBreakReminder = false
+    private var lastProgressReminderMark = 0
+
+    private var selectedInterval: TimeInterval {
+        get {
+            let minutes = settings.integer(forKey: "workIntervalMinutes")
+            return TimeInterval(minutes == 45 || minutes == 90 ? minutes : 60) * 60
+        }
+        set {
+            settings.set(Int(newValue / 60), forKey: "workIntervalMinutes")
+        }
+    }
+
+    private var selectedBreakDuration: TimeInterval {
+        get {
+            let minutes = settings.integer(forKey: "breakDurationMinutes")
+            return TimeInterval(minutes == 5 || minutes == 10 ? minutes : 3) * 60
+        }
+        set {
+            settings.set(Int(newValue / 60), forKey: "breakDurationMinutes")
+        }
+    }
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        terminateOtherInstances()
+        NSApp.setActivationPolicy(isUIPreview ? .regular : .accessory)
+        setUpStatusItem()
+        if !isUIPreview {
+            rebuildOverlayWindows()
+        }
+
+        pointerController.gainProvider = { [weak self] in
+            self?.isUIPreview == true ? 1 : (self?.clock.pointerGain ?? 1)
+        }
+
+        if isAnyPreview {
+            if isProgressPreview {
+                clock.primeForProgressPreview()
+            } else {
+                clock.primeForPreview()
+            }
+        }
+        startTimers()
+        if !isAnyPreview {
+            showOnboardingIfNeeded()
+        }
+        if !isUIPreview {
+            startPointerWeightIfPossible()
+        }
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(screensChanged),
+            name: NSApplication.didChangeScreenParametersNotification,
+            object: nil
+        )
+    }
+
+    /// A previous build can still be running when a newly built app is opened
+    /// from the Finder. Both copies share the same bundle identifier, so make
+    /// sure an older copy cannot keep its event tap and pointer weighting
+    /// alive after the new copy starts.
+    private func terminateOtherInstances() {
+        guard let bundleIdentifier = Bundle.main.bundleIdentifier else { return }
+        let currentPID = ProcessInfo.processInfo.processIdentifier
+        let currentLaunchDate = NSRunningApplication(processIdentifier: currentPID)?.launchDate
+        for application in NSRunningApplication.runningApplications(withBundleIdentifier: bundleIdentifier)
+            where application.processIdentifier != currentPID {
+            // Only an older instance should be asked to exit. Without this
+            // ordering check, two copies launched close together can see each
+            // other and terminate one another, leaving an old event tap alive
+            // just long enough to make Quit appear ineffective.
+            let isOlder = application.launchDate.map { otherDate in
+                guard let currentLaunchDate else { return true }
+                return otherDate < currentLaunchDate
+            } ?? true
+            if isOlder {
+                _ = application.terminate()
+            }
+        }
+    }
+
+    private func restoreHardware() {
+        pointerController.stop()
+        _ = hidAccelerationController.restore()
+    }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        restoreHardware()
+        return .terminateNow
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        restoreHardware()
+    }
+
+    private func showOnboardingIfNeeded() {
+        guard !settings.bool(forKey: "hasCompletedOnboarding") else { return }
+
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = "When should your cursor get heavy?"
+        alert.informativeText = "The comet appears halfway through and grows heavier until it is time to stand."
+        alert.addButton(withTitle: "60 minutes")
+        alert.addButton(withTitle: "45 minutes")
+        alert.addButton(withTitle: "90 minutes")
+
+        let response = alert.runModal()
+        let minutes: Int
+        switch response {
+        case .alertSecondButtonReturn: minutes = 45
+        case .alertThirdButtonReturn: minutes = 90
+        default: minutes = 60
+        }
+
+        selectedInterval = TimeInterval(minutes * 60)
+        clock.interval = selectedInterval
+
+        let breakAlert = NSAlert()
+        breakAlert.messageText = "How long should your break be?"
+        breakAlert.informativeText = "The countdown restarts whenever you use the keyboard or pointer."
+        breakAlert.addButton(withTitle: "3 minutes")
+        breakAlert.addButton(withTitle: "5 minutes")
+        breakAlert.addButton(withTitle: "10 minutes")
+
+        let breakResponse = breakAlert.runModal()
+        let breakMinutes: Int
+        switch breakResponse {
+        case .alertSecondButtonReturn: breakMinutes = 5
+        case .alertThirdButtonReturn: breakMinutes = 10
+        default: breakMinutes = 3
+        }
+        selectedBreakDuration = TimeInterval(breakMinutes * 60)
+        clock.breakDuration = selectedBreakDuration
+        clock.reset()
+        settings.set(true, forKey: "hasCompletedOnboarding")
+
+        let permission = NSAlert()
+        permission.messageText = "Let Gravtail change pointer weight"
+        permission.informativeText = "macOS Accessibility permission is required to make the pointer physically slower. The comet works without it."
+        permission.addButton(withTitle: "Enable")
+        permission.addButton(withTitle: "Not now")
+        if permission.runModal() == .alertFirstButtonReturn {
+            pointerController.requestPermission()
+        }
+    }
+
+    private func startTimers() {
+        let logic = Timer(timeInterval: 0.25, repeats: true) { [weak self] _ in
+            self?.logicTick()
+        }
+        RunLoop.main.add(logic, forMode: .common)
+        logicTimer = logic
+
+        let render = Timer(timeInterval: 1.0 / 90.0, repeats: true) { [weak self] _ in
+            self?.renderTick()
+        }
+        RunLoop.main.add(render, forMode: .common)
+        renderTimer = render
+    }
+
+    private func logicTick() {
+        // Preview sessions are intentionally frozen at the requested demo
+        // state. Otherwise a user who has been away from the keyboard for
+        // longer than the configured break duration can launch --preview-45
+        // and have it immediately mark the break as completed, hiding the
+        // very heavy pointer effect the preview is meant to demonstrate.
+        let idleTime = isAnyPreview ? 0 : currentIdleTime()
+        let now = ProcessInfo.processInfo.systemUptime
+        let wasAway = clock.isAway
+        let recovered = clock.tick(
+            now: now,
+            idleTime: idleTime
+        )
+        let returnedFromBreak = wasAway && !clock.isAway
+        if recovered {
+            CometModel.shared.clear()
+            needsFinalClear = true
+            hasShownBreakReminder = false
+            lastProgressReminderMark = 0
+        }
+        if returnedFromBreak {
+            breakReminder.showRecovered()
+        }
+        let progressMark = ReminderSchedule.progressMark(
+            elapsed: clock.elapsed,
+            workInterval: clock.interval
+        )
+        if progressMark > lastProgressReminderMark {
+            lastProgressReminderMark = progressMark
+            breakReminder.showProgress(remaining: clock.remaining)
+        }
+        menuBarIconView?.needsDisplay = true
+
+        if clock.elapsed >= clock.interval {
+            let remaining = clock.breakRemaining(now: now, idleTime: idleTime)
+            if hasShownBreakReminder {
+                breakReminder.update(remaining: remaining)
+            } else {
+                hasShownBreakReminder = true
+                breakReminder.showBreak(remaining: remaining) { [weak self] in
+                    self?.quitApplication()
+                }
+            }
+        }
+
+        if !isUIPreview && pointerController.isTrusted {
+            // Starting is idempotent only when permission has just become available.
+            if !pointerTapIsActive {
+                pointerTapIsActive = pointerController.start()
+            }
+        } else {
+            if pointerTapIsActive {
+                pointerController.stop()
+            }
+            pointerTapIsActive = false
+        }
+
+        // The HID controller changes the system-wide mouse and trackpad
+        // acceleration. Do not touch those settings unless the user has
+        // granted Accessibility and the event tap is actually running. This
+        // keeps the permission promise honest and immediately restores the
+        // system values if permission is revoked or the tap cannot start.
+        if !isUIPreview && pointerController.isTrusted && pointerTapIsActive {
+            hidAccelerationController.update(weight: clock.weight)
+        } else {
+            _ = hidAccelerationController.restore()
+        }
+    }
+
+    private var pointerTapIsActive = false
+
+    private func renderTick() {
+        let weight = clock.weight
+        if weight > 0.005 {
+            CometModel.shared.tick(weight: weight, now: CACurrentMediaTime())
+        } else if !CometModel.shared.points.isEmpty {
+            CometModel.shared.clear()
+            needsFinalClear = true
+        }
+
+        if !CometModel.shared.points.isEmpty || needsFinalClear {
+            needsFinalClear = !CometModel.shared.points.isEmpty
+            overlayWindows.forEach { $0.contentView?.needsDisplay = true }
+        }
+    }
+
+    /// Returns the time since the last physical keyboard or pointing-device
+    /// event. We deliberately read the HID state instead of the combined
+    /// session state: the latter can include events posted by applications or
+    /// accessibility tools. A window repaint, notification, or a new WeChat
+    /// message is not user input and must not make the cursor heavy again.
+    private static func secondsSinceLastInput(includeMouseMovement: Bool = true) -> TimeInterval {
+        var physicalInputTypes: [CGEventType] = [
+            .leftMouseDown, .rightMouseDown, .otherMouseDown,
+            .leftMouseDragged, .rightMouseDragged, .otherMouseDragged,
+            .scrollWheel, .keyDown,
+        ]
+        if includeMouseMovement {
+            physicalInputTypes.insert(.mouseMoved, at: 0)
+        }
+        return physicalInputTypes.map {
+            CGEventSource.secondsSinceLastEventType(.hidSystemState, eventType: $0)
+        }.min() ?? .greatestFiniteMagnitude
+    }
+
+    /// Returns inactivity based on physical input only. While the pointer
+    /// weighting event tap is active, the app deliberately excludes the
+    /// global mouseMoved HID clock: warping the cursor to apply resistance can
+    /// update that clock without any user movement. The event tap timestamp
+    /// tracks the actual pointer events delivered to the app instead.
+    private func currentIdleTime() -> TimeInterval {
+        let hidIdle = Self.secondsSinceLastInput(includeMouseMovement: !pointerTapIsActive)
+        guard pointerTapIsActive,
+              let lastPointerInput = pointerController.lastPhysicalInputUptime else {
+            return hidIdle
+        }
+        let pointerIdle = max(0, ProcessInfo.processInfo.systemUptime - lastPointerInput)
+        return min(hidIdle, pointerIdle)
+    }
+
+    @objc private func screensChanged() {
+        rebuildOverlayWindows()
+        positionMenuBarIconPanel()
+    }
+
+    private func rebuildOverlayWindows() {
+        overlayWindows.forEach { $0.orderOut(nil) }
+        overlayWindows.removeAll()
+
+        for screen in NSScreen.screens {
+            let drawingFrame = screen.visibleFrame
+            let window = NSWindow(
+                contentRect: drawingFrame,
+                styleMask: .borderless,
+                backing: .buffered,
+                defer: false
+            )
+            window.backgroundColor = .clear
+            window.isOpaque = false
+            window.hasShadow = false
+            // Keep the comet above ordinary app windows but below the system
+            // menu bar. A screen-saver-level full-screen window hides menu bar
+            // items even when the window itself is transparent.
+            window.level = .floating
+            window.ignoresMouseEvents = true
+            window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+            window.isReleasedWhenClosed = false
+            window.setAccessibilityElement(false)
+
+            let view = CometView(frame: NSRect(origin: .zero, size: drawingFrame.size))
+            view.setAccessibilityElement(false)
+            view.screenOrigin = drawingFrame.origin
+            view.weightProvider = { [weak self] in self?.clock.weight ?? 0 }
+            window.contentView = view
+            window.orderFrontRegardless()
+            overlayWindows.append(window)
+        }
+    }
+
+    private func setUpStatusItem() {
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        // Keep a stable identity so macOS can remember the item after the user
+        // moves it.
+        statusItem.autosaveName = "HeavyCursorStatusItem"
+        statusItem.isVisible = true
+        if let button = statusItem.button {
+            button.image = HeavyCursorIconRenderer.makeImage(size: NSSize(width: 18, height: 18))
+            button.title = ""
+            button.imagePosition = .imageOnly
+            button.imageScaling = .scaleProportionallyDown
+            button.toolTip = "Gravtail · Click for settings"
+            button.setAccessibilityLabel("Gravtail settings")
+        }
+        let menu = NSMenu()
+        menu.delegate = self
+        statusItem.menu = menu
+        setUpMenuBarIconPanel()
+    }
+
+    private func setUpMenuBarIconPanel() {
+        guard !isUIPreview else { return }
+
+        let panel = NSPanel(
+            contentRect: NSRect(x: 0, y: 0, width: 24, height: 24),
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        panel.backgroundColor = .clear
+        panel.isOpaque = false
+        panel.hasShadow = false
+        panel.level = .statusBar
+        panel.hidesOnDeactivate = false
+        panel.ignoresMouseEvents = false
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+        panel.isReleasedWhenClosed = false
+
+        let view = MenuBarIconView(frame: NSRect(x: 0, y: 0, width: 24, height: 24))
+        view.delegate = self
+        view.weightProvider = { [weak self] in self?.clock.weight ?? 0 }
+        view.toolTip = "Gravtail · Click for settings"
+        panel.contentView = view
+
+        let menu = NSMenu()
+        menu.delegate = self
+        menuBarIconMenu = menu
+        menuBarIconPanel = panel
+        menuBarIconView = view
+        positionMenuBarIconPanel()
+        panel.orderFrontRegardless()
+    }
+
+    private func positionMenuBarIconPanel() {
+        guard let panel = menuBarIconPanel,
+              let screen = NSScreen.main ?? NSScreen.screens.first else { return }
+
+        let area = screen.auxiliaryTopRightArea
+        let x: CGFloat
+        let y: CGFloat
+        if let area, area.width > 0 {
+            x = area.minX + 6
+            y = area.minY + 2
+        } else {
+            x = screen.frame.maxX - 120
+            y = screen.frame.maxY - 28
+        }
+        panel.setFrame(
+            NSRect(x: x, y: y, width: 24, height: 24),
+            display: true
+        )
+    }
+
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        menu.removeAllItems()
+
+        let status = NSMenuItem(title: statusText, action: nil, keyEquivalent: "")
+        status.isEnabled = false
+        menu.addItem(status)
+        menu.addItem(.separator())
+
+        if isAnyPreview {
+            if !pointerController.isTrusted {
+                let permission = NSMenuItem(
+                    title: "Enable Cursor Weight…",
+                    action: #selector(enablePermission),
+                    keyEquivalent: ""
+                )
+                permission.target = self
+                menu.addItem(permission)
+                menu.addItem(.separator())
+            }
+            menu.addItem(NSMenuItem(
+                title: "Quit Preview",
+                action: #selector(quitApplication),
+                keyEquivalent: "q"
+            ))
+            menu.items.last?.target = self
+            return
+        }
+
+        let workMenu = NSMenu()
+        for minutes in [45, 60, 90] {
+            let item = NSMenuItem(
+                title: "\(minutes) minutes",
+                action: #selector(selectInterval(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.representedObject = minutes
+            item.state = Int(clock.interval / 60) == minutes ? .on : .off
+            workMenu.addItem(item)
+        }
+        let workItem = NSMenuItem(title: "Work Interval", action: nil, keyEquivalent: "")
+        workItem.submenu = workMenu
+        menu.addItem(workItem)
+
+        let breakMenu = NSMenu()
+        for minutes in [3, 5, 10] {
+            let item = NSMenuItem(
+                title: "\(minutes) minutes",
+                action: #selector(selectBreakDuration(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.representedObject = minutes
+            item.state = Int(clock.breakDuration / 60) == minutes ? .on : .off
+            breakMenu.addItem(item)
+        }
+        let breakItem = NSMenuItem(title: "Break Duration", action: nil, keyEquivalent: "")
+        breakItem.submenu = breakMenu
+        menu.addItem(breakItem)
+
+        menu.addItem(.separator())
+        let reset = NSMenuItem(title: "Reset Session", action: #selector(resetSession), keyEquivalent: "")
+        reset.target = self
+        menu.addItem(reset)
+
+        if !pointerController.isTrusted {
+            menu.addItem(.separator())
+            let permission = NSMenuItem(
+                title: "Enable Cursor Weight…",
+                action: #selector(enablePermission),
+                keyEquivalent: ""
+            )
+            permission.target = self
+            menu.addItem(permission)
+        }
+
+        menu.addItem(.separator())
+        let quit = NSMenuItem(title: "Quit Gravtail", action: #selector(quitApplication), keyEquivalent: "q")
+        quit.target = self
+        menu.addItem(quit)
+    }
+
+    private var statusText: String {
+        if isUIPreview {
+            return "UI preview only · pointer weight off"
+        }
+        if isFortyFiveMinutePreview {
+            if clock.isAway {
+                return "Break complete · cursor light"
+            }
+            if clock.elapsed >= clock.interval {
+                if !pointerTapIsActive {
+                    return "Break due · comet only"
+                }
+                return hidAccelerationController.isActive ? "Break due · 90% heavy" : "Break due · 90% heavy (software)"
+            }
+            return "45-minute preview · warming up"
+        }
+        if clock.isAway { return "Light again" }
+        if clock.remaining <= 0 {
+            let now = ProcessInfo.processInfo.systemUptime
+            let effect: String
+            if !pointerTapIsActive {
+                effect = " · comet only"
+            } else if hidAccelerationController.isActive {
+                effect = " · 90% heavy"
+            } else {
+                effect = " · 90% heavy (software)"
+            }
+            return "Break due · \(Self.format(clock.breakRemaining(now: now, idleTime: currentIdleTime())))\(effect)"
+        }
+        let minutes = max(1, Int(ceil(clock.remaining / 60)))
+        return "Next break in \(minutes) min"
+    }
+
+    @objc private func selectInterval(_ sender: NSMenuItem) {
+        guard let minutes = sender.representedObject as? Int else { return }
+        selectedInterval = TimeInterval(minutes * 60)
+        clock.interval = selectedInterval
+        resetSession()
+    }
+
+    @objc private func selectBreakDuration(_ sender: NSMenuItem) {
+        guard let minutes = sender.representedObject as? Int else { return }
+        selectedBreakDuration = TimeInterval(minutes * 60)
+        clock.breakDuration = selectedBreakDuration
+        resetSession()
+    }
+
+    @objc private func resetSession() {
+        clock.reset()
+        CometModel.shared.clear()
+        needsFinalClear = true
+        hasShownBreakReminder = false
+        lastProgressReminderMark = 0
+        breakReminder.hide()
+    }
+
+    @objc private func enablePermission() {
+        pointerController.requestPermission()
+    }
+
+    @objc private func quitApplication() {
+        restoreHardware()
+        NSApp.terminate(nil)
+    }
+
+    private func startPointerWeightIfPossible() {
+        pointerTapIsActive = pointerController.start()
+    }
+
+    private static func format(_ interval: TimeInterval) -> String {
+        let seconds = max(0, Int(ceil(interval)))
+        return String(format: "%02d:%02d", seconds / 60, seconds % 60)
+    }
+}
+
+extension AppDelegate: MenuBarIconDelegate {
+    func menuBarIconPressed(from view: NSView) {
+        guard let menu = menuBarIconMenu else { return }
+        menu.popUp(
+            positioning: nil,
+            at: NSPoint(x: view.bounds.midX, y: view.bounds.minY - 4),
+            in: view
+        )
+    }
+}
+
+if ProcessInfo.processInfo.arguments.contains("--check-accessibility") {
+    print(AXIsProcessTrusted() ? "trusted" : "not-trusted")
+} else if ProcessInfo.processInfo.arguments.contains("--check-hid") {
+    // Diagnostics must be read-only; normal app launches still restore an
+    // orphaned backup automatically.
+    let controller = HIDAccelerationController(restoreOrphanedBackup: false)
+    let values = controller.currentValues()
+    let mouseText = values.mouse.map { String($0) } ?? "unavailable"
+    let trackpadText = values.trackpad.map { String($0) } ?? "unavailable"
+    print("mouse=\(mouseText)")
+    print("trackpad=\(trackpadText)")
+} else if ProcessInfo.processInfo.arguments.contains("--restore-hid") {
+    let controller = HIDAccelerationController()
+    controller.restore()
+    _ = CGAssociateMouseAndMouseCursorPosition(1)
+    print("HID acceleration restored")
+} else {
+    let application = NSApplication.shared
+    let delegate = AppDelegate()
+    application.delegate = delegate
+    application.run()
+}
