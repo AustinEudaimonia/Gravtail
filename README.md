@@ -25,7 +25,7 @@ Gravtail 是一个轻量的 macOS 菜单栏应用。它不靠突然弹出的系�
 | 达到设定时间 | 顶部居中的小胶囊提示起身 | 达到最重状态，最低约为原响应的 10% |
 | 完成休息 | comet 和重量逐渐清除 | 恢复启动前保存的原始设置 |
 
-你可以选择 **45 / 60 / 90 分钟**的连续使用时间，以及 **3 / 5 / 10 分钟**的休息时长。每 15 分钟，屏幕上方会出现一个短暂的小胶囊，告诉你距离起身还剩多久；到点后胶囊会显示休息倒计时。键盘或鼠标输入会重新开始休息倒计时，完整休息后进入下一轮。
+你可以选择 **45 / 60 / 90 分钟**的连续使用时间，以及 **3 / 5 / 10 分钟**的休息时长。应用启动或重置后，会等到第一次真实的键盘/鼠标输入才开始计时。每 15 分钟，屏幕上方会出现一个短暂的小胶囊，告诉你距离起身还剩多久；到点后胶囊会显示休息倒计时。键盘或鼠标输入会重新开始休息倒计时，完整休息后进入下一轮。
 
 ## 视觉语言
 
@@ -58,7 +58,7 @@ A deliberately small macOS menu bar app: the longer you use your Mac, the heavie
 - At the selected limit, the pill stays visible with a live break countdown and Quit action.
 - Pills sit at the upper center of the main screen, below the menu bar and away from bottom-center voice tools such as Typeless.
 - A single small comet/cursor icon is pinned near the center of the top menu-bar strip (automatically avoiding a MacBook notch) and opens work and break settings, Reset Session, and Quit. It remains visible over full-screen apps and never relies on the system's hidden status-item overflow.
-- Any keyboard or pointer input restarts the break countdown.
+- The first physical keyboard or pointer input starts a new work session; any keyboard or pointer input restarts the break countdown.
 - Completing the break restores the original pointer response and starts a new session.
 - Reset or quit at any time from the menu bar.
 
@@ -75,9 +75,12 @@ open ".build/Gravtail.app"
 ```
 
 The comet works immediately. macOS Accessibility permission is required for
-global pointer weighting: open System Settings → Privacy & Security →
-Accessibility and enable Gravtail. Without that permission the comet still
-works, but Gravtail will not change mouse or trackpad settings.
+global pointer weighting. Choose **开启鼠标加重…** from the Gravtail menu; it
+opens the exact System Settings → Privacy & Security → Accessibility pane.
+On current macOS versions this opens the settings pane directly instead of
+stacking a modal prompt; an older-system fallback prompt is throttled to one
+per app launch. Without that permission the comet still works, but Gravtail
+will not change mouse or trackpad settings.
 
 Gravtail temporarily lowers the active mouse and trackpad acceleration
 while the cursor is heavy, backs up the original values first, and restores
@@ -122,8 +125,8 @@ open ".build/Gravtail.app" --args --preview-45
 ```
 
 Preview mode does not automatically open the Accessibility permission prompt.
-If you want to test physical pointer weighting, choose **Enable Cursor
-Weight…** from the menu-bar icon once, or grant Gravtail access manually
+If you want to test physical pointer weighting, choose **开启鼠标加重…** from
+the menu-bar icon once, or grant Gravtail access manually
 in System Settings.
 
 To preview a 15-minute progress pill without waiting:
@@ -139,7 +142,7 @@ open ".build/Gravtail.app" --args --preview-ui --preview-progress
 ./package.sh
 ```
 
-This produces a universal macOS zip signed with the certificate-backed
+This rebuilds and then produces a universal macOS zip signed with the certificate-backed
 `Heavy Cursor Local` identity, a rebuildable source zip, and a
 `SHA256SUMS.txt` file in `dist/`. The certificate must already exist in your
 login keychain; run the setup script once and keep the resulting certificate

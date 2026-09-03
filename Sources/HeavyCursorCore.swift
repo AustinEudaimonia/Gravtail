@@ -54,8 +54,23 @@ final class SessionClock {
         self.breakDuration = breakDuration
     }
 
+    /// Starts a fresh work session at a known physical-input timestamp. A
+    /// nil timestamp means the clock is waiting for the first real keyboard or
+    /// pointing-device event and must not accumulate time yet.
+    func reset(startingAt now: TimeInterval? = nil) {
+        elapsed = 0
+        isAway = false
+        dueSince = nil
+        lastTick = now
+    }
+
     @discardableResult
     func tick(now: TimeInterval, idleTime: TimeInterval) -> Bool {
+        // A newly launched or reset session is intentionally idle until the
+        // app observes a real physical input. This prevents time spent on the
+        // login screen, desktop, or an already-open notification from being
+        // counted as work.
+        guard let previous = lastTick else { return false }
         defer { lastTick = now }
         // Before the work limit, a long idle period means the user already
         // stepped away and the current work session should reset.
@@ -88,7 +103,6 @@ final class SessionClock {
             return false
         }
 
-        guard let previous = lastTick else { return false }
         let previousElapsed = elapsed
         elapsed += max(0, now - previous)
         if dueSince == nil && previousElapsed < interval && elapsed >= interval {
@@ -96,13 +110,6 @@ final class SessionClock {
             dueSince = previous + timeToDeadline
         }
         return false
-    }
-
-    func reset() {
-        elapsed = 0
-        isAway = false
-        dueSince = nil
-        lastTick = ProcessInfo.processInfo.systemUptime
     }
 
     /// Used by the local preview launcher to demonstrate a completed work

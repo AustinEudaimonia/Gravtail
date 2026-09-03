@@ -39,6 +39,7 @@ final class HIDAccelerationController {
     private var lastWeight: CGFloat = -1
     private(set) var isActive = false
     private(set) var lastOperationSucceeded = true
+    private(set) var lastRollbackSucceeded = true
 
     init(restoreOrphanedBackup: Bool = true) {
         handle = NXOpenEventStatus()
@@ -62,6 +63,7 @@ final class HIDAccelerationController {
         guard handle != 0 else {
             isActive = false
             lastOperationSucceeded = false
+            lastRollbackSucceeded = false
             return
         }
         let clamped = max(0, min(1, weight))
@@ -79,18 +81,29 @@ final class HIDAccelerationController {
         }
         guard abs(lastWeight - clamped) > 0.005 else { return }
 
-        var success = true
+        var changed: [(key: CFString, value: Double)] = []
+
         if let originalMouse {
-            success = write(Key.mouse, max(0, originalMouse * Double(1 - clamped))) && success
+            let target = max(0, originalMouse * Double(1 - clamped))
+            guard write(Key.mouse, target) else {
+                failUpdate(afterRollingBack: changed)
+                return
+            }
+            changed.append((Key.mouse, originalMouse))
         }
         if let originalTrackpad {
-            success = write(Key.trackpad, max(0, originalTrackpad * Double(1 - clamped))) && success
+            let target = max(0, originalTrackpad * Double(1 - clamped))
+            guard write(Key.trackpad, target) else {
+                failUpdate(afterRollingBack: changed)
+                return
+            }
+            changed.append((Key.trackpad, originalTrackpad))
         }
-        lastOperationSucceeded = success
-        isActive = success
-        if success {
-            lastWeight = clamped
-        }
+
+        lastOperationSucceeded = true
+        lastRollbackSucceeded = true
+        isActive = true
+        lastWeight = clamped
     }
 
     @discardableResult
@@ -98,26 +111,46 @@ final class HIDAccelerationController {
         guard handle != 0 else {
             isActive = false
             lastOperationSucceeded = false
+            lastRollbackSucceeded = false
             return false
         }
         var success = true
         if let originalMouse { success = write(Key.mouse, originalMouse) && success }
         if let originalTrackpad { success = write(Key.trackpad, originalTrackpad) && success }
-        originalMouse = nil
-        originalTrackpad = nil
         lastWeight = -1
         isActive = false
         lastOperationSucceeded = success
+        lastRollbackSucceeded = success
         if success {
+            originalMouse = nil
+            originalTrackpad = nil
             clearBackup()
         }
         return success
+    }
+
+    private func failUpdate(afterRollingBack changed: [(key: CFString, value: Double)]) {
+        // A failed two-device update must not leave only one device weighted.
+        // Keep the originals and persistent backup if rollback itself fails so
+        // the next tick or a relaunch can retry restoration safely.
+        var rollbackSucceeded = true
+        for change in changed.reversed() {
+            rollbackSucceeded = write(change.key, change.value) && rollbackSucceeded
+        }
+        lastWeight = -1
+        isActive = false
+        lastRollbackSucceeded = rollbackSucceeded
+        // The update failed even if the rollback succeeded; this lets the app
+        // surface a real failure while it retries on the next logic tick.
+        lastOperationSucceeded = false
     }
 
     private func captureOriginalValuesIfNeeded() {
         guard originalMouse == nil && originalTrackpad == nil else { return }
         originalMouse = read(Key.mouse)
         originalTrackpad = read(Key.trackpad)
+
+        guard originalMouse != nil || originalTrackpad != nil else { return }
 
         if let originalMouse {
             defaults.set(originalMouse, forKey: Key.mouseBackup)
@@ -129,7 +162,14 @@ final class HIDAccelerationController {
     }
 
     private func restoreOrphanedBackupIfNeeded() {
-        guard handle != 0, defaults.bool(forKey: Key.hasBackup) else { return }
+        guard handle != 0 else {
+            if defaults.bool(forKey: Key.hasBackup) {
+                lastOperationSucceeded = false
+                lastRollbackSucceeded = false
+            }
+            return
+        }
+        guard defaults.bool(forKey: Key.hasBackup) else { return }
         var success = true
         if defaults.object(forKey: Key.mouseBackup) != nil {
             success = write(Key.mouse, defaults.double(forKey: Key.mouseBackup)) && success
@@ -138,6 +178,7 @@ final class HIDAccelerationController {
             success = write(Key.trackpad, defaults.double(forKey: Key.trackpadBackup)) && success
         }
         lastOperationSucceeded = success
+        lastRollbackSucceeded = success
         if success {
             clearBackup()
         }

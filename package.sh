@@ -31,6 +31,15 @@ if [[ "$SIGNING_IDENTITY_VALUE" != "-" ]] && ! security find-identity -p codesig
   exit 2
 fi
 
+# Always rebuild before packaging. Without this guard, a release command can
+# silently archive a stale or missing .build/Gravtail.app from an earlier
+# checkout.
+SIGNING_IDENTITY="$SIGNING_IDENTITY_VALUE" "$PROJECT_DIR/build.sh" >/dev/null
+if [[ ! -x "$APP_DIR/Contents/MacOS/HeavyCursor" ]]; then
+  print -u2 "Build completed without a runnable Gravtail executable: $APP_DIR"
+  exit 2
+fi
+
 # Export explicitly so package.sh cannot accidentally build with a different
 # identity than the one it reports and validates.
 # --norsrc keeps Finder resource-fork metadata out of the release archive.

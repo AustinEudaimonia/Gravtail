@@ -13,13 +13,12 @@ final class BreakReminderPanel: NSObject {
     private let message = NSTextField(labelWithString: "起身动一下")
     private let countdown = NSTextField(labelWithString: "03:00")
     private let divider = NSBox()
-    private let quitButton = NSButton(title: "Quit", target: nil, action: nil)
+    private let quitButton = NSButton(title: "退出", target: nil, action: nil)
     private var dismissWorkItem: DispatchWorkItem?
     private var onQuit: (() -> Void)?
     private(set) var isVisible = false
 
     override init() {
-        let isUIPreview = ProcessInfo.processInfo.arguments.contains("--preview-ui")
         panel = ReminderNSPanel(
             contentRect: NSRect(x: 0, y: 0, width: 244, height: 36),
             styleMask: [.borderless, .nonactivatingPanel],
@@ -29,10 +28,12 @@ final class BreakReminderPanel: NSObject {
         super.init()
 
         panel.isOpaque = false
-        panel.setAccessibilityTitle("Break Reminder")
+        panel.setAccessibilityTitle("休息提醒")
         panel.backgroundColor = .clear
         panel.hasShadow = false
-        panel.level = isUIPreview ? .floating : .screenSaver
+        // Keep the reminder above ordinary app windows without covering
+        // password, permission, or other system-security dialogs.
+        panel.level = .floating
         panel.ignoresMouseEvents = false
         panel.hidesOnDeactivate = false
         panel.becomesKeyOnlyIfNeeded = true
@@ -74,7 +75,7 @@ final class BreakReminderPanel: NSObject {
     func showProgress(remaining: TimeInterval) {
         dismissWorkItem?.cancel()
         onQuit = nil
-        icon.image = NSImage(systemSymbolName: "clock", accessibilityDescription: "Next break")
+        icon.image = NSImage(systemSymbolName: "clock", accessibilityDescription: "距离起身时间")
         icon.contentTintColor = NSColor(srgbRed: 0.98, green: 0.62, blue: 0.28, alpha: 1)
         message.stringValue = "还有 \(max(1, Int(ceil(remaining / 60)))) 分钟 · 起身走走"
         countdown.isHidden = true
@@ -91,7 +92,7 @@ final class BreakReminderPanel: NSObject {
     func showRecovered() {
         dismissWorkItem?.cancel()
         onQuit = nil
-        icon.image = NSImage(systemSymbolName: "checkmark.circle.fill", accessibilityDescription: "Recovered")
+        icon.image = NSImage(systemSymbolName: "checkmark.circle.fill", accessibilityDescription: "鼠标已恢复轻盈")
         icon.contentTintColor = .systemGreen
         message.stringValue = "鼠标已恢复轻盈"
         countdown.isHidden = true
@@ -124,7 +125,7 @@ final class BreakReminderPanel: NSObject {
     }
 
     private func configureBreakState() {
-        icon.image = NSImage(systemSymbolName: "figure.walk.motion", accessibilityDescription: "Stand and move")
+        icon.image = NSImage(systemSymbolName: "figure.walk.motion", accessibilityDescription: "起身活动")
         icon.contentTintColor = NSColor(srgbRed: 0.98, green: 0.62, blue: 0.28, alpha: 1)
         message.stringValue = "起身动一下"
         countdown.isHidden = false
@@ -163,7 +164,11 @@ final class BreakReminderPanel: NSObject {
     }
 
     private func restingOrigin() -> NSPoint {
-        guard let screen = NSScreen.main ?? NSScreen.screens.first else { return .zero }
+        let pointer = NSEvent.mouseLocation
+        let screen = NSScreen.screens.first(where: { $0.frame.contains(pointer) })
+            ?? NSScreen.main
+            ?? NSScreen.screens.first
+        guard let screen else { return .zero }
         let visible = screen.visibleFrame
         return NSPoint(
             x: screen.frame.midX - panel.frame.width / 2,
@@ -212,7 +217,7 @@ final class BreakReminderPanel: NSObject {
             countdown.widthAnchor.constraint(equalToConstant: 39),
             divider.widthAnchor.constraint(equalToConstant: 1),
             divider.heightAnchor.constraint(equalToConstant: 13),
-            quitButton.widthAnchor.constraint(equalToConstant: 26),
+            quitButton.widthAnchor.constraint(equalToConstant: 30),
             stack.leadingAnchor.constraint(equalTo: effect.leadingAnchor, constant: 10),
             stack.trailingAnchor.constraint(equalTo: effect.trailingAnchor, constant: -10),
             stack.centerYAnchor.constraint(equalTo: effect.centerYAnchor),
@@ -229,7 +234,7 @@ final class BreakReminderPanel: NSObject {
             (message, max(0, message.intrinsicContentSize.width)),
             (countdown, 39),
             (divider, 1),
-            (quitButton, 26),
+            (quitButton, 30),
         ]
         let visible = items.filter { !$0.view.isHidden }
         let gaps = max(0, visible.count - 1)

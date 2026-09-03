@@ -29,6 +29,8 @@ enum HeavyCursorCoreTests {
 
         let clock = SessionClock(interval: 10, breakDuration: 5 * 60)
         _ = clock.tick(now: 0, idleTime: 0)
+        expect(clock.elapsed == 0, "a session waits for the first physical input")
+        clock.reset(startingAt: 0)
         _ = clock.tick(now: 6, idleTime: 0)
         expect(abs(clock.elapsed - 6) < 0.001, "active time accumulates")
         expect(clock.weight > 0, "weight begins after half the interval")

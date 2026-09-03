@@ -135,6 +135,6 @@ final class MenuBarIconView: NSView {
     }
 
     override func accessibilityRole() -> NSAccessibility.Role? { .button }
-    override func accessibilityLabel() -> String? { "Gravtail settings" }
-    override func accessibilityHelp() -> String? { "Open Gravtail settings" }
+    override func accessibilityLabel() -> String? { "打开 Gravtail 设置" }
+    override func accessibilityHelp() -> String? { "打开 Gravtail 工作、休息和退出选项" }
 }

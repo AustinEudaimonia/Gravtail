@@ -11,6 +11,11 @@ final class PointerWeightController {
     /// mouseMoved clock look busy even when the user has not touched the
     /// mouse.
     private(set) var lastPhysicalInputUptime: TimeInterval?
+    /// Permission requests are deliberately throttled. Calling
+    /// AXIsProcessTrustedWithOptions(prompt: true) on every menu click can
+    /// stack duplicate macOS prompts and make the user think authorization is
+    /// broken.
+    private var hasRequestedPermissionThisSession = false
     var gainProvider: () -> CGFloat = { 1 }
 
     var isTrusted: Bool {
@@ -18,10 +23,38 @@ final class PointerWeightController {
     }
 
     func requestPermission() {
+        guard !isTrusted else { return }
+
+        if hasRequestedPermissionThisSession {
+            openAccessibilitySettings()
+            return
+        }
+
+        // Put the user in the exact pane that controls this permission. The
+        // generic System Settings URL often opens on "General", which leaves
+        // users unsure where Gravtail went.
+        if openAccessibilitySettings() {
+            // The modern System Settings pane is the least surprising and
+            // most stable authorization flow. Do not put a second modal
+            // prompt on top of it.
+            hasRequestedPermissionThisSession = true
+            return
+        }
+
+        guard !hasRequestedPermissionThisSession else { return }
+        hasRequestedPermissionThisSession = true
         let options = [
             kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true
         ] as CFDictionary
         _ = AXIsProcessTrustedWithOptions(options)
+    }
+
+    @discardableResult
+    private func openAccessibilitySettings() -> Bool {
+        guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") else {
+            return false
+        }
+        return NSWorkspace.shared.open(url)
     }
 
     @discardableResult
