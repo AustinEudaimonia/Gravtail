@@ -274,7 +274,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // native cursor over text and click normally while the break timer
         // counts down. Input during the break is still observed by the HID
         // clock and restarts the inactivity countdown; it is simply not
-        // transformed by the resistance tap.
+        // transformed by the software resistance tap.
         let shouldRunPointerWeight = !isUIPreview
             && !clock.isOnBreak
             && pointerController.isTrusted
@@ -295,12 +295,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             pointerTapIsActive = false
         }
 
-        // The HID controller changes the system-wide mouse and trackpad
-        // acceleration. Do not touch those settings unless the user has
-        // granted Accessibility and the event tap is actually running. This
-        // keeps the permission promise honest and immediately restores the
-        // system values if permission is revoked or the tap cannot start.
-        if shouldRunPointerWeight && pointerTapIsActive {
+        // Keep the system-wide mouse and trackpad acceleration reduced through
+        // the break reminder. The software event tap is stopped so AppKit can
+        // perform native cursor hit testing, while the HID layer still carries
+        // the physical "heavy" cue until the break is completed.
+        let shouldApplyHardwareWeight = !isUIPreview
+            && pointerController.isTrusted
+            && clock.weight > HeavyCursorConstants.pointerTapActivationWeight
+        if shouldApplyHardwareWeight {
             hidAccelerationController.update(weight: clock.weight)
         } else {
             _ = hidAccelerationController.restore()
@@ -309,9 +311,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private var pointerTapIsActive = false
 
-    /// The break state intentionally renders no comet and no pointer weight.
-    /// Preview launches are exempt so `--preview-45` continues to demonstrate
-    /// the full effect without waiting for a real break.
+    /// The break state intentionally renders no comet and no software pointer
+    /// warp. Preview launches are exempt so `--preview-45` continues to
+    /// demonstrate the full effect without waiting for a real break.
     private var activeWeight: CGFloat {
         guard !clock.isOnBreak || isAnyPreview else { return 0 }
         return clock.weight
@@ -631,7 +633,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if clock.isAway { return "休息完成 · 移动鼠标开始新一轮" }
         if clock.isOnBreak {
             let now = ProcessInfo.processInfo.systemUptime
-            return "休息中 · \(Self.format(clock.breakRemaining(now: now, idleTime: currentIdleTime()))) · 鼠标正常"
+            let effect = hidAccelerationController.isActive ? "鼠标加重" : "鼠标正常"
+            return "休息中 · \(Self.format(clock.breakRemaining(now: now, idleTime: currentIdleTime()))) · \(effect)"
         }
         if !hidAccelerationController.lastOperationSucceeded && activeWeight > HeavyCursorConstants.pointerTapActivationWeight {
             return "鼠标加重失败 · 仅彗尾效果"
