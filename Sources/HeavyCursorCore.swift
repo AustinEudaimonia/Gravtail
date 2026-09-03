@@ -135,6 +135,13 @@ final class SessionClock {
         isAway ? 0 : WeightCurve.weight(elapsed: elapsed, interval: interval)
     }
 
+    /// True while the configured work interval has ended and the user is
+    /// completing the inactivity-based break. The reminder is visible, but
+    /// the session has not yet recovered into the next work cycle.
+    var isOnBreak: Bool {
+        !isAway && dueSince != nil && elapsed >= interval
+    }
+
     var pointerGain: CGFloat {
         WeightCurve.pointerGain(for: weight)
     }

@@ -16,6 +16,7 @@ final class BreakReminderPanel: NSObject {
     private let quitButton = NSButton(title: "退出", target: nil, action: nil)
     private var dismissWorkItem: DispatchWorkItem?
     private var onQuit: (() -> Void)?
+    private var pointerMonitor: Any?
     private(set) var isVisible = false
 
     override init() {
@@ -34,13 +35,25 @@ final class BreakReminderPanel: NSObject {
         // Keep the reminder above ordinary app windows without covering
         // password, permission, or other system-security dialogs.
         panel.level = .floating
-        panel.ignoresMouseEvents = false
+        // Stay click-through unless the pointer is actually over the pill.
+        // This prevents the reminder from stealing focus from a text field
+        // underneath it while preserving a clickable Quit button.
+        panel.ignoresMouseEvents = true
         panel.hidesOnDeactivate = false
         panel.becomesKeyOnlyIfNeeded = true
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         panel.isReleasedWhenClosed = false
         panel.alphaValue = 0
         panel.contentView = makeContentView()
+        pointerMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved]) { [weak self] _ in
+            self?.updatePointerInteraction()
+        }
+    }
+
+    deinit {
+        if let pointerMonitor {
+            NSEvent.removeMonitor(pointerMonitor)
+        }
     }
 
     func showBreak(remaining: TimeInterval, onQuit: @escaping () -> Void) {
@@ -53,6 +66,7 @@ final class BreakReminderPanel: NSObject {
         guard !isVisible else { return }
         isVisible = true
         positionPanel()
+        updatePointerInteraction()
         if ProcessInfo.processInfo.arguments.contains("--preview-ui") {
             NSApp.activate(ignoringOtherApps: true)
             panel.makeKeyAndOrderFront(nil)
@@ -111,6 +125,7 @@ final class BreakReminderPanel: NSObject {
         dismissWorkItem = nil
         guard isVisible else { return }
         isVisible = false
+        panel.ignoresMouseEvents = true
 
         NSAnimationContext.runAnimationGroup({ context in
             context.duration = 0.18
@@ -138,6 +153,7 @@ final class BreakReminderPanel: NSObject {
         guard !isVisible else { return }
         isVisible = true
         positionPanel()
+        updatePointerInteraction()
         if ProcessInfo.processInfo.arguments.contains("--preview-ui") {
             NSApp.activate(ignoringOtherApps: true)
             panel.makeKeyAndOrderFront(nil)
@@ -161,6 +177,14 @@ final class BreakReminderPanel: NSObject {
     private func positionPanel() {
         let origin = restingOrigin()
         panel.setFrameOrigin(NSPoint(x: origin.x, y: origin.y - 6))
+    }
+
+    private func updatePointerInteraction() {
+        guard isVisible else {
+            panel.ignoresMouseEvents = true
+            return
+        }
+        panel.ignoresMouseEvents = !panel.frame.contains(NSEvent.mouseLocation)
     }
 
     private func restingOrigin() -> NSPoint {

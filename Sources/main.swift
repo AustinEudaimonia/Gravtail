@@ -270,7 +270,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
         }
 
+        // Once the work interval ends, the user must be able to move the
+        // native cursor over text and click normally while the break timer
+        // counts down. Input during the break is still observed by the HID
+        // clock and restarts the inactivity countdown; it is simply not
+        // transformed by the resistance tap.
         let shouldRunPointerWeight = !isUIPreview
+            && !clock.isOnBreak
             && pointerController.isTrusted
             && clock.weight > HeavyCursorConstants.pointerTapActivationWeight
 
@@ -303,8 +309,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private var pointerTapIsActive = false
 
+    /// The break state intentionally renders no comet and no pointer weight.
+    /// Preview launches are exempt so `--preview-45` continues to demonstrate
+    /// the full effect without waiting for a real break.
+    private var activeWeight: CGFloat {
+        guard !clock.isOnBreak || isAnyPreview else { return 0 }
+        return clock.weight
+    }
+
     private func renderTick() {
-        let weight = clock.weight
+        let weight = activeWeight
         if weight > 0.005 {
             CometModel.shared.tick(weight: weight, now: CACurrentMediaTime())
         } else if !CometModel.shared.points.isEmpty {
@@ -615,7 +629,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return "45 分钟预览 · 正在变重"
         }
         if clock.isAway { return "休息完成 · 移动鼠标开始新一轮" }
-        if !hidAccelerationController.lastOperationSucceeded && clock.weight > HeavyCursorConstants.pointerTapActivationWeight {
+        if clock.isOnBreak {
+            let now = ProcessInfo.processInfo.systemUptime
+            return "休息中 · \(Self.format(clock.breakRemaining(now: now, idleTime: currentIdleTime()))) · 鼠标正常"
+        }
+        if !hidAccelerationController.lastOperationSucceeded && activeWeight > HeavyCursorConstants.pointerTapActivationWeight {
             return "鼠标加重失败 · 仅彗尾效果"
         }
         if clock.remaining <= 0 {
@@ -674,6 +692,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func startPointerWeightIfPossible() {
         guard !isUIPreview,
+              !clock.isOnBreak,
               pointerController.isTrusted,
               clock.weight > HeavyCursorConstants.pointerTapActivationWeight else {
             pointerTapIsActive = false
