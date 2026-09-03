@@ -614,6 +614,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if isUIPreview {
             return "仅预览界面 · 鼠标加重未开启"
         }
+        if !pointerController.isTrusted {
+            return "辅助功能未开启 · 仅彗尾效果"
+        }
         if !hidAccelerationController.lastOperationSucceeded,
            !hidAccelerationController.lastRollbackSucceeded {
             return "鼠标恢复失败 · 请重新启动 Gravtail"

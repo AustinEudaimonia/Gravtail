@@ -83,6 +83,11 @@ stacking a modal prompt; an older-system fallback prompt is throttled to one
 per app launch. Without that permission the comet still works, but Gravtail
 will not change mouse or trackpad settings.
 
+When testing a fresh build from a new folder, make sure the exact
+`Gravtail.app` you launched is the enabled entry in this list. macOS can keep
+an older Gravtail entry enabled while treating a newly moved or rebuilt copy
+as a separate accessibility client.
+
 Gravtail temporarily lowers the active mouse and trackpad acceleration
 while the cursor is heavy, backs up the original values first, and restores
 them after a completed break or normal quit. If the process is force-killed,
