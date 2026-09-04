@@ -22,8 +22,8 @@ if [[ "$SIGNING_IDENTITY_VALUE" == Developer\ ID\ Application:* ]]; then
   exit 2
 fi
 
-print "Creating a certificate-backed self-signed package with identity: ${SIGNING_IDENTITY_VALUE}"
-print "Users will need Control-click → Open on first launch; notarization is unavailable."
+print "Creating a locally re-signable community package from identity: ${SIGNING_IDENTITY_VALUE}"
+print "Each user's installer will replace this signature with a private per-Mac identity."
 
 if [[ "$SIGNING_IDENTITY_VALUE" != "-" ]] && ! security find-identity -p codesigning -v 2>/dev/null | grep -Fq "\"${SIGNING_IDENTITY_VALUE}\""; then
   print -u2 "Signing identity not found: ${SIGNING_IDENTITY_VALUE}"
@@ -40,15 +40,26 @@ if [[ ! -x "$APP_DIR/Contents/MacOS/HeavyCursor" ]]; then
   exit 2
 fi
 
-# Export explicitly so package.sh cannot accidentally build with a different
-# identity than the one it reports and validates.
-# --norsrc keeps Finder resource-fork metadata out of the release archive.
-ditto -c -k --norsrc --keepParent "$APP_DIR" "$APP_ZIP"
+package_stage="$(mktemp -d -t gravtail-package)"
+trap 'rm -rf "$package_stage"' EXIT
 
-source_stage="$(mktemp -d -t heavy-cursor-source)"
-trap 'rm -rf "$source_stage"' EXIT
+# The public community archive contains a local re-signing installer. Each Mac
+# creates its own stable certificate and reuses it for future updates, avoiding
+# a shared private key or a different TCC identity on every build.
+install_stage="$package_stage/Gravtail-${VERSION}"
+mkdir -p "$install_stage/Support"
+ditto "$APP_DIR" "$install_stage/Gravtail.app"
+cp "$PROJECT_DIR/scripts/install-community-build.sh" "$install_stage/安装 Gravtail.command"
+cp "$PROJECT_DIR/scripts/ensure-local-signing-identity.sh" "$install_stage/Support/ensure-local-signing-identity.sh"
+cp "$PROJECT_DIR/HeavyCursor.entitlements" "$install_stage/Support/HeavyCursor.entitlements"
+cp "$PROJECT_DIR/COMMUNITY_INSTALL.md" "$install_stage/安装说明.md"
+chmod +x "$install_stage/安装 Gravtail.command" "$install_stage/Support/ensure-local-signing-identity.sh"
+ditto -c -k --norsrc --keepParent "$install_stage" "$APP_ZIP"
+
+source_stage="$package_stage/source"
+mkdir -p "$source_stage"
 mkdir -p "$source_stage/Gravtail"
-cp "$PROJECT_DIR"/{.gitignore,CHANGELOG.md,HeavyCursor.entitlements,Info.plist,LICENSE,README.md,THIRD_PARTY_NOTICES.md,build.sh,package.sh,test.sh} "$source_stage/Gravtail/"
+cp "$PROJECT_DIR"/{.gitignore,CHANGELOG.md,COMMUNITY_INSTALL.md,HeavyCursor.entitlements,Info.plist,LICENSE,README.md,THIRD_PARTY_NOTICES.md,build.sh,package.sh,test.sh} "$source_stage/Gravtail/"
 cp -R "$PROJECT_DIR/Sources" "$PROJECT_DIR/Tests" "$PROJECT_DIR/Resources" "$source_stage/Gravtail/"
 cp -R "$PROJECT_DIR/scripts" "$source_stage/Gravtail/"
 if [[ -d "$PROJECT_DIR/.github" ]]; then

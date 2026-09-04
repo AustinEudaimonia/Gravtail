@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.4.7
+
+- Replaced the fragile shared self-signed download flow with a community
+  installer that creates and reuses a private local signing identity on each
+  user's Mac.
+- Community updates are re-signed with the same per-Mac certificate and
+  installed to the same Applications path, maximizing Accessibility identity
+  continuity without distributing any private signing key.
+- The release archive now contains `安装 Gravtail.command`, an installation
+  guide, signature checks, a recoverable previous-version backup, and the
+  minimal local-signing support files.
+
 ## 0.4.6
 
 - Fixed the apparently inert launch state: a subtle comet now appears after

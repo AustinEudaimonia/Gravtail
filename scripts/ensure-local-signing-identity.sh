@@ -9,6 +9,10 @@ ensure_code_signing_trust() {
   local public_cert="${trust_dir}/identity.cer"
 
   security find-certificate -c "${IDENTITY_NAME}" -p > "${public_cert}"
+  if security verify-cert -p codeSign -c "${public_cert}" >/dev/null 2>&1; then
+    rm -rf "${trust_dir}"
+    return
+  fi
   security add-trusted-cert \
     -r trustRoot \
     -p codeSign \
