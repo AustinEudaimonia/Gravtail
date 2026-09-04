@@ -117,12 +117,17 @@ fi
 # Keep one recoverable previous version and discard older installer backups.
 # Without this, every update silently leaves another full .app in Applications.
 setopt local_options null_glob
-previous_apps=("${INSTALL_ROOT}"/Gravtail.previous-*.app(Nom))
-if (( ${#previous_apps[@]} > 1 )); then
-  for old_app in "${previous_apps[@]:1}"; do
-    rm -rf -- "${old_app}"
-  done
+previous_apps=("${INSTALL_ROOT}"/Gravtail.previous-*.app(N))
+keep_backup="${backup_app}"
+if [[ -z "${keep_backup}" && ${#previous_apps[@]} -gt 0 ]]; then
+  # Timestamp is part of the filename, so reverse name order is newest first.
+  previous_apps=("${(@On)previous_apps}")
+  keep_backup="${previous_apps[1]}"
 fi
+for old_app in "${previous_apps[@]}"; do
+  [[ "${old_app}" == "${keep_backup}" ]] && continue
+  rm -rf -- "${old_app}"
+done
 
 print ""
 print "Gravtail 已安装并绑定到这台 Mac 的本地签名。"

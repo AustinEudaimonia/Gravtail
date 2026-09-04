@@ -14,6 +14,8 @@
   final stable install path with Launch Services.
 - Kept only the newest recoverable previous-version backup after a successful
   update and added bounded two-generation diagnostic log rotation.
+- Corrected backup selection so cleanup retains the App replaced by the current
+  update, never an older timestamped copy.
 - Expanded `test.sh` to type-check all production sources for arm64 and x86_64,
   lint metadata and shell scripts, and enforce key safety invariants.
 - Added GitHub Actions coverage on arm64 and Intel macOS runners.
