@@ -22,6 +22,11 @@ if [[ "$SIGNING_IDENTITY_VALUE" == Developer\ ID\ Application:* ]]; then
   exit 2
 fi
 
+# `zip` updates an existing archive in place and keeps entries that no longer
+# exist in the staging directory. Remove only this version's generated outputs
+# so a rebuilt release cannot accidentally contain stale source files.
+rm -f "$APP_ZIP" "$SOURCE_ZIP" "$CHECKSUMS"
+
 print "Creating a locally re-signable community package from identity: ${SIGNING_IDENTITY_VALUE}"
 print "Each user's installer will replace this signature with a private per-Mac identity."
 
