@@ -30,6 +30,18 @@ enum HeavyCursorCoreTests {
         )
         expect(HeavyCursorConstants.pointerTapActivationWeight > 0, "pointer tap waits for meaningful weight")
         expect(HeavyCursorConstants.pointerWarpGainThreshold < 1, "near-one gain skips cursor warp")
+        expect(
+            !MaintenancePolicy.shouldRotateLog(currentBytes: 100, incomingBytes: 100),
+            "small diagnostic logs stay in place"
+        )
+        expect(
+            MaintenancePolicy.shouldRotateLog(
+                currentBytes: MaintenancePolicy.maximumLogBytes,
+                incomingBytes: 1
+            ),
+            "diagnostic logs rotate at the size limit"
+        )
+        expect(MaintenancePolicy.installerBackupsToKeep == 1, "installer keeps one rollback copy")
 
         expect(
             CursorWeightingPolicy.mode(

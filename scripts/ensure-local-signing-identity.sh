@@ -1,7 +1,7 @@
 #!/bin/zsh
 set -euo pipefail
 
-IDENTITY_NAME="${1:-${HEAVY_CURSOR_LOCAL_IDENTITY:-Heavy Cursor Local}}"
+IDENTITY_NAME="${1:-${GRAVTAIL_LOCAL_IDENTITY:-${HEAVY_CURSOR_LOCAL_IDENTITY:-Gravtail Local}}}"
 KEYCHAIN="$(security default-keychain -d user | sed -e 's/^ *//' -e 's/\"//g')"
 
 ensure_code_signing_trust() {

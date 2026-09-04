@@ -3,25 +3,70 @@ import Darwin
 
 private typealias HIDHandle = mach_port_t
 
-@_silgen_name("NXOpenEventStatus")
-private func NXOpenEventStatus() -> HIDHandle
+/// These HID functions are intentionally loaded at runtime. They are not part
+/// of Apple's public SDK contract, so hard-linking them would make Gravtail
+/// fail to launch if a future macOS release removes one of the symbols. With a
+/// dynamic table, an unsupported system simply keeps native pointer behavior.
+private final class HIDFunctionTable {
+    typealias Open = @convention(c) () -> HIDHandle
+    typealias Close = @convention(c) (HIDHandle) -> Void
+    typealias Get = @convention(c) (
+        HIDHandle,
+        CFString,
+        UnsafeMutablePointer<Double>
+    ) -> kern_return_t
+    typealias Set = @convention(c) (HIDHandle, CFString, Double) -> kern_return_t
 
-@_silgen_name("NXCloseEventStatus")
-private func NXCloseEventStatus(_ handle: HIDHandle)
+    private let library: UnsafeMutableRawPointer
+    let open: Open
+    let close: Close
+    let get: Get
+    let set: Set
 
-@_silgen_name("IOHIDGetAccelerationWithKey")
-private func IOHIDGetAccelerationWithKey(
-    _ handle: HIDHandle,
-    _ key: CFString,
-    _ acceleration: UnsafeMutablePointer<Double>
-) -> kern_return_t
+    private init?() {
+        let path = "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit"
+        guard let library = dlopen(path, RTLD_LAZY | RTLD_LOCAL) else {
+            return nil
+        }
+        guard let openSymbol = dlsym(library, "NXOpenEventStatus"),
+              let closeSymbol = dlsym(library, "NXCloseEventStatus"),
+              let getSymbol = dlsym(library, "IOHIDGetAccelerationWithKey"),
+              let setSymbol = dlsym(library, "IOHIDSetAccelerationWithKey") else {
+            dlclose(library)
+            return nil
+        }
+        self.library = library
+        open = unsafeBitCast(openSymbol, to: Open.self)
+        close = unsafeBitCast(closeSymbol, to: Close.self)
+        get = unsafeBitCast(getSymbol, to: Get.self)
+        set = unsafeBitCast(setSymbol, to: Set.self)
+    }
 
-@_silgen_name("IOHIDSetAccelerationWithKey")
-private func IOHIDSetAccelerationWithKey(
-    _ handle: HIDHandle,
-    _ key: CFString,
-    _ acceleration: Double
-) -> kern_return_t
+    deinit {
+        dlclose(library)
+    }
+
+    static func load() -> HIDFunctionTable? {
+        HIDFunctionTable()
+    }
+}
+
+enum HIDCompatibility: String {
+    case available
+    case systemAPIUnavailable
+    case deviceSettingsUnavailable
+
+    var userFacingDescription: String {
+        switch self {
+        case .available:
+            return "硬件加重可用"
+        case .systemAPIUnavailable:
+            return "此 macOS 版本不支持硬件加重"
+        case .deviceSettingsUnavailable:
+            return "当前鼠标设备不支持硬件加重"
+        }
+    }
+}
 
 final class HIDAccelerationController {
     private enum Key {
@@ -33,6 +78,7 @@ final class HIDAccelerationController {
     }
 
     private let defaults = UserDefaults.standard
+    private let functions: HIDFunctionTable?
     private let handle: HIDHandle
     private var originalMouse: Double?
     private var originalTrackpad: Double?
@@ -43,15 +89,29 @@ final class HIDAccelerationController {
     private(set) var hadOrphanedBackup = false
     private(set) var didRestoreOrphanedBackup = false
     private(set) var isSafetyDisabled = false
+    private(set) var compatibility: HIDCompatibility
     /// Called after the original values are durably saved but before the first
     /// HID write. Returning false prevents weighting entirely. The app uses
     /// this to require an external crash-recovery watchdog.
     var backupPreparedHandler: ((Double?, Double?) -> Bool)?
 
     init(restoreOrphanedBackup: Bool = true) {
-        handle = NXOpenEventStatus()
+        functions = HIDFunctionTable.load()
+        handle = functions?.open() ?? 0
+        if functions == nil || handle == 0 {
+            compatibility = .systemAPIUnavailable
+        } else {
+            compatibility = .available
+        }
         if restoreOrphanedBackup {
             restoreOrphanedBackupIfNeeded()
+        }
+        if compatibility == .available {
+            let values = currentValues()
+            if values.mouse == nil && values.trackpad == nil {
+                compatibility = .deviceSettingsUnavailable
+                isSafetyDisabled = true
+            }
         }
     }
 
@@ -61,8 +121,8 @@ final class HIDAccelerationController {
         if originalMouse != nil || originalTrackpad != nil {
             restore()
         }
-        if handle != 0 {
-            NXCloseEventStatus(handle)
+        if handle != 0, let functions {
+            functions.close(handle)
         }
     }
 
@@ -79,8 +139,10 @@ final class HIDAccelerationController {
         guard handle != 0 else {
             isActive = false
             lastOperationSucceeded = false
-            lastRollbackSucceeded = false
+            // No write was attempted, so native input is already intact.
+            lastRollbackSucceeded = true
             isSafetyDisabled = true
+            compatibility = .systemAPIUnavailable
             return
         }
         let clamped = max(0, min(1, weight))
@@ -101,6 +163,7 @@ final class HIDAccelerationController {
             isActive = false
             lastOperationSucceeded = false
             isSafetyDisabled = true
+            compatibility = .deviceSettingsUnavailable
             return
         }
         guard abs(lastWeight - clamped) > 0.005 else { return }
@@ -138,6 +201,7 @@ final class HIDAccelerationController {
             originalTrackpad = nil
             clearBackup()
             isSafetyDisabled = true
+            compatibility = .deviceSettingsUnavailable
             return
         }
 
@@ -151,9 +215,12 @@ final class HIDAccelerationController {
     func restore() -> Bool {
         guard handle != 0 else {
             isActive = false
-            lastOperationSucceeded = false
-            lastRollbackSucceeded = false
-            return false
+            // An unavailable API is safe when there is no persisted write to
+            // recover. Report failure only if an older run left a real backup.
+            let needsRecovery = defaults.bool(forKey: Key.hasBackup)
+            lastOperationSucceeded = !needsRecovery
+            lastRollbackSucceeded = !needsRecovery
+            return !needsRecovery
         }
         guard originalMouse != nil || originalTrackpad != nil else {
             if defaults.bool(forKey: Key.hasBackup) {
@@ -204,7 +271,7 @@ final class HIDAccelerationController {
     }
 
     func resetSafetyLockout() {
-        isSafetyDisabled = false
+        isSafetyDisabled = compatibility != .available
     }
 
     func disableForSafety() {
@@ -266,14 +333,15 @@ final class HIDAccelerationController {
     }
 
     private func read(_ key: CFString) -> Double? {
-        guard handle != 0 else { return nil }
+        guard handle != 0, let functions else { return nil }
         var value = 0.0
-        return IOHIDGetAccelerationWithKey(handle, key, &value) == KERN_SUCCESS ? value : nil
+        return functions.get(handle, key, &value) == KERN_SUCCESS ? value : nil
     }
 
     @discardableResult
     private func write(_ key: CFString, _ value: Double) -> Bool {
-        guard IOHIDSetAccelerationWithKey(handle, key, value) == KERN_SUCCESS,
+        guard let functions,
+              functions.set(handle, key, value) == KERN_SUCCESS,
               let actual = read(key) else { return false }
         return abs(actual - value) <= 0.001
     }
