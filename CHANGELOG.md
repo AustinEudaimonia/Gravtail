@@ -19,6 +19,8 @@
   command could erase a running app's saved pre-weight acceleration values.
 - HID writes and restores now verify the value read back from macOS, and the
   recovery command no longer claims success when no saved backup exists.
+- The local signing setup now verifies and repairs code-signing trust even
+  when the `Heavy Cursor Local` identity already exists in Keychain.
 
 ## 0.4.5
 

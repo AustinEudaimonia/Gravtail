@@ -2,9 +2,26 @@
 set -euo pipefail
 
 IDENTITY_NAME="${1:-${HEAVY_CURSOR_LOCAL_IDENTITY:-Heavy Cursor Local}}"
+KEYCHAIN="$(security default-keychain -d user | sed -e 's/^ *//' -e 's/\"//g')"
+
+ensure_code_signing_trust() {
+  local trust_dir="$(mktemp -d -t heavy-cursor-trust)"
+  local public_cert="${trust_dir}/identity.cer"
+
+  security find-certificate -c "${IDENTITY_NAME}" -p > "${public_cert}"
+  security add-trusted-cert \
+    -r trustRoot \
+    -p codeSign \
+    -k "${KEYCHAIN}" \
+    "${public_cert}" >/dev/null
+  security verify-cert -p codeSign -c "${public_cert}" >/dev/null
+  rm -rf "${trust_dir}"
+}
 
 if security find-identity -p codesigning -v 2>/dev/null | grep -Fq "\"${IDENTITY_NAME}\""; then
+  ensure_code_signing_trust
   print "Using existing code-signing identity: ${IDENTITY_NAME}"
+  print "Verified user-level code-signing trust for: ${IDENTITY_NAME}"
   exit 0
 fi
 
@@ -13,7 +30,6 @@ if ! command -v openssl >/dev/null 2>&1; then
   exit 1
 fi
 
-KEYCHAIN="$(security default-keychain -d user | sed -e 's/^ *//' -e 's/\"//g')"
 WORK_DIR="$(mktemp -d -t heavy-cursor-signing)"
 trap 'rm -rf "${WORK_DIR}"' EXIT
 
@@ -69,11 +85,7 @@ security import "${P12}" \
 
 # Trust only this certificate for code signing in the user's login keychain.
 # It is not installed as a system-wide TLS or web trust root.
-security add-trusted-cert \
-  -r trustRoot \
-  -p codeSign \
-  -k "${KEYCHAIN}" \
-  "${CERT}" >/dev/null
+ensure_code_signing_trust
 
 if ! security find-identity -p codesigning -v 2>/dev/null | grep -Fq "\"${IDENTITY_NAME}\""; then
   print -u2 "The certificate was created, but macOS did not expose it as a valid code-signing identity."
