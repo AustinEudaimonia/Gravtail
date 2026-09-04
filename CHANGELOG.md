@@ -18,6 +18,8 @@
   write succeeded but read-back verification failed.
 - Made community updates roll back to the previous app if final installation
   verification fails.
+- Prevented the installer from mistaking an unrelated shell command that only
+  mentions the Gravtail executable path for a running app instance.
 - Rebuilt release archives from scratch so removed files cannot survive inside
   an updated ZIP as stale entries.
 - Added policy tests that fail if the unsafe dual-weighting path is restored.

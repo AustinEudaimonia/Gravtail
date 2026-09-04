@@ -32,7 +32,16 @@ fi
 
 TARGET_APP="${INSTALL_ROOT}/Gravtail.app"
 TARGET_EXECUTABLE="${TARGET_APP}/Contents/MacOS/HeavyCursor"
-if ps -axo command= | grep -F "${TARGET_EXECUTABLE}" | grep -v grep >/dev/null 2>&1; then
+gravtail_is_running=0
+while IFS= read -r running_command; do
+  case "${running_command}" in
+    "${TARGET_EXECUTABLE}"|"${TARGET_EXECUTABLE} "*)
+      gravtail_is_running=1
+      break
+      ;;
+  esac
+done < <(ps -axo command=)
+if [[ "${gravtail_is_running}" == "1" ]]; then
   fail "Gravtail 正在运行。请先从顶部菜单选择“退出 Gravtail”，再重新运行安装程序。"
 fi
 
