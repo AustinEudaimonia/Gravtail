@@ -17,6 +17,6 @@ jobs:
         runner: [macos-14, macos-15-intel]
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Run safety and compatibility checks
         run: ./test.sh

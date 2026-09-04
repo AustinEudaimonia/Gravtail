@@ -17,6 +17,8 @@
 - Expanded `test.sh` to type-check all production sources for arm64 and x86_64,
   lint metadata and shell scripts, and enforce key safety invariants.
 - Added GitHub Actions coverage on arm64 and Intel macOS runners.
+- Kept CI self-contained on stock GitHub macOS runners without assuming
+  developer utilities such as ripgrep are preinstalled.
 
 ## 0.4.8
 

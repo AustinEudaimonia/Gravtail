@@ -31,12 +31,12 @@ zsh -n \
   "$PROJECT_DIR/scripts/import-signing-identity.sh" \
   "$PROJECT_DIR/scripts/install-community-build.sh"
 
-if rg -q '@_silgen_name' "$PROJECT_DIR/Sources"; then
+if grep -R -q '@_silgen_name' "$PROJECT_DIR/Sources"; then
   print -u2 "FAIL: private HID symbols must be loaded dynamically"
   exit 1
 fi
 
-if ! rg -q 'certificate leaf = H' "$PROJECT_DIR/scripts/install-community-build.sh"; then
+if ! grep -q 'certificate leaf = H' "$PROJECT_DIR/scripts/install-community-build.sh"; then
   print -u2 "FAIL: installer must verify the exact local signing certificate"
   exit 1
 fi
