@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.4.9
+
+- Replaced hard-linked private HID symbols with runtime capability detection,
+  so a future unsupported macOS release fails open instead of preventing the
+  app from launching.
+- Added device compatibility state to diagnostics and the menu; unsupported
+  devices retain the comet while native pointer behavior remains untouched.
+- Replaced the floating menu-bar panel with a genuine `NSStatusItem`, removing
+  clock/notch overlap and letting macOS reserve a real menu-bar slot.
+- Made the community installer sign and verify with the exact certificate
+  fingerprint, clear quarantine only after verification, and register the
+  final stable install path with Launch Services.
+- Kept only the newest recoverable previous-version backup after a successful
+  update and added bounded two-generation diagnostic log rotation.
+- Expanded `test.sh` to type-check all production sources for arm64 and x86_64,
+  lint metadata and shell scripts, and enforce key safety invariants.
+- Added GitHub Actions coverage on arm64 and Intel macOS runners.
+
 ## 0.4.8
 
 - Fixed a critical pointer-freeze bug caused by applying the software event-

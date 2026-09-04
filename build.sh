@@ -13,7 +13,7 @@ ARCHS=(${=ARCHS_STRING})
 # A fixed certificate-backed identity keeps macOS TCC approvals stable across
 # rebuilds. Every build is certificate-signed; ad-hoc signing is deliberately
 # unsupported because it cannot provide a stable identity to macOS.
-SIGNING_IDENTITY="${SIGNING_IDENTITY:-Heavy Cursor Local}"
+SIGNING_IDENTITY="${SIGNING_IDENTITY:-Gravtail Local}"
 
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
 

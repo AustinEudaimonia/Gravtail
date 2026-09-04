@@ -47,6 +47,8 @@ fi
 
 print "1/4  准备这台 Mac 的 Gravtail 本地签名…"
 "${SUPPORT_DIR}/ensure-local-signing-identity.sh" "${IDENTITY_NAME}"
+IDENTITY_HASH="$(security find-identity -p codesigning -v 2>/dev/null | awk -v name="\"${IDENTITY_NAME}\"" 'index($0, name) { print $2; exit }')"
+[[ "${IDENTITY_HASH}" =~ '^[0-9A-Fa-f]{40}$' ]] || fail "无法定位 '${IDENTITY_NAME}' 的证书指纹。"
 
 stage_dir="$(mktemp -d "${INSTALL_ROOT}/.gravtail-install.XXXXXX")"
 trap 'rm -rf "${stage_dir}"' EXIT
@@ -65,14 +67,23 @@ restore_previous_install() {
 print "2/4  复制并使用本地身份重新签名…"
 ditto "${SOURCE_APP}" "${staged_app}"
 codesign --force --deep \
-  --sign "${IDENTITY_NAME}" \
+  --sign "${IDENTITY_HASH}" \
   --entitlements "${SUPPORT_DIR}/HeavyCursor.entitlements" \
   "${staged_app}" >/dev/null
 codesign --verify --deep --strict "${staged_app}"
+codesign --verify --deep --strict \
+  -R="certificate leaf = H\"${IDENTITY_HASH}\"" \
+  "${staged_app}" >/dev/null
 
 signature_info="$(codesign -d -vv "${staged_app}" 2>&1)"
 signer="$(print -r -- "${signature_info}" | awk -F= '/^Authority=/ && !found { print $2; found=1 }')"
 [[ "${signer}" == "${IDENTITY_NAME}" ]] || fail "本地重签名校验失败。"
+
+# The user has already explicitly opened this verified installer. Remove only
+# the downloaded App's quarantine marker after its incoming signature, bundle
+# ID, and new local signature have all passed verification. This avoids a
+# second Gatekeeper detour when the installed App is opened for the first time.
+xattr -dr com.apple.quarantine "${staged_app}" 2>/dev/null || true
 
 print "3/4  固定安装到：${TARGET_APP}"
 if [[ -e "${TARGET_APP}" ]]; then
@@ -96,9 +107,26 @@ if [[ "${installed_bundle_id}" != "${EXPECTED_BUNDLE_ID}" ]]; then
   fail "安装后的 Bundle ID 校验失败，已恢复旧版本。"
 fi
 
+# Register the fixed install path before launch so Launch Services and TCC see
+# the locally signed copy, never the temporary copy inside the download ZIP.
+LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
+if [[ -x "${LSREGISTER}" ]]; then
+  "${LSREGISTER}" -f "${TARGET_APP}" >/dev/null 2>&1 || true
+fi
+
+# Keep one recoverable previous version and discard older installer backups.
+# Without this, every update silently leaves another full .app in Applications.
+setopt local_options null_glob
+previous_apps=("${INSTALL_ROOT}"/Gravtail.previous-*.app(Nom))
+if (( ${#previous_apps[@]} > 1 )); then
+  for old_app in "${previous_apps[@]:1}"; do
+    rm -rf -- "${old_app}"
+  done
+fi
+
 print ""
 print "Gravtail 已安装并绑定到这台 Mac 的本地签名。"
-print "首次打开：按住 Control 点击 Gravtail.app → 打开。"
+print "现在可以直接打开 Gravtail.app；安装器已验证并移除它的下载隔离标记。"
 print "然后在顶部 Gravtail 菜单选择“开启鼠标加重…”，授予一次辅助功能权限。"
 print "以后更新请继续运行新版安装包中的此脚本；不要删除钥匙串里的 '${IDENTITY_NAME}'。"
 

@@ -18,10 +18,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let breakReminder = BreakReminderPanel()
     private var hidRecoveryWatchdog: Process?
 
-    private var menuBarIconPanel: NSPanel?
-    private var menuBarIconView: MenuBarIconView?
-    private var menuBarIconMenu: NSMenu?
-    private var menuBarScreenFrame: NSRect?
+    private var statusItem: NSStatusItem?
     private var overlayWindows: [NSWindow] = []
     private var renderTimer: Timer?
     private var logicTimer: Timer?
@@ -95,6 +92,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             "accessibility": pointerController.isTrusted ? "trusted" : "not-trusted",
             "workMinutes": String(Int(clock.interval / 60)),
             "breakMinutes": String(Int(clock.breakDuration / 60)),
+            "hidCompatibility": hidAccelerationController.compatibility.rawValue,
         ])
         NotificationCenter.default.addObserver(
             self,
@@ -273,8 +271,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // very heavy pointer effect the preview is meant to demonstrate.
         let idleTime = isAnyPreview ? 0 : currentIdleTime()
         let now = ProcessInfo.processInfo.systemUptime
-        positionMenuBarIconPanelIfScreenChanged()
-
         // A previous copy may still be unwinding its event tap and restoring
         // HID settings. Keep this instance passive until it has exited so two
         // builds cannot compete for the same pointer stream.
@@ -466,7 +462,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func screensChanged() {
         rebuildOverlayWindows()
-        positionMenuBarIconPanel()
         breakReminder.screenConfigurationChanged()
     }
 
@@ -507,111 +502,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func setUpMenuBarIcon() {
         guard !isUIPreview else { return }
 
-        // Do not use an NSStatusItem here. The system may hide/reorder one
-        // without exposing that state to the app, which was the reason the
-        // Gravtail icon could disappear completely for some users. A single
-        // status-bar-level panel is deterministic, works over full-screen
-        // apps, and cannot create a second icon in the overflow area.
-        let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 28, height: 28),
-            styleMask: [.borderless, .nonactivatingPanel],
-            backing: .buffered,
-            defer: false
-        )
-        panel.backgroundColor = .clear
-        panel.isOpaque = false
-        panel.hasShadow = false
-        panel.level = .statusBar
-        panel.hidesOnDeactivate = false
-        panel.ignoresMouseEvents = false
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
-        panel.isReleasedWhenClosed = false
-
-        let view = MenuBarIconView(frame: NSRect(x: 0, y: 0, width: 28, height: 28))
-        view.delegate = self
-        view.weightProvider = { [weak self] in self?.clock.weight ?? 0 }
-        view.setAccessibilityElement(true)
-        view.setAccessibilityRole(.button)
-        view.setAccessibilityLabel("打开 Gravtail 设置")
-        view.setAccessibilityHelp("打开 Gravtail 工作、休息和退出选项")
-        view.toolTip = "Gravtail · 点击打开设置"
-        panel.contentView = view
-
+        // A genuine status item reserves its own menu-bar slot. The previous
+        // floating panel could overlap the clock or another app because macOS
+        // did not know it occupied menu-bar space.
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        item.isVisible = true
+        if let button = item.button {
+            button.image = HeavyCursorIconRenderer.makeImage(
+                size: NSSize(width: 18, height: 18)
+            )
+            button.imagePosition = .imageOnly
+            button.toolTip = "Gravtail · 点击打开设置"
+            button.setAccessibilityLabel("打开 Gravtail 设置")
+            button.setAccessibilityHelp("打开 Gravtail 工作、休息和退出选项")
+        }
         let menu = NSMenu()
         menu.delegate = self
-        menuBarIconMenu = menu
-        menuBarIconPanel = panel
-        menuBarIconView = view
-        positionMenuBarIconPanel()
-        panel.orderFrontRegardless()
-    }
-
-    private func positionMenuBarIconPanel() {
-        guard let panel = menuBarIconPanel,
-              let screen = screenContainingPointer() else { return }
-
-        let frame = screen.frame
-        menuBarScreenFrame = frame
-        let visible = screen.visibleFrame
-        let menuBarHeight = max(0, frame.maxY - visible.maxY)
-        let panelSize = panel.frame.size
-        let origin: NSPoint
-
-        // MacBook screens reserve a notch-sized hole in the middle of the
-        // menu bar. The old exact-center placement was therefore technically
-        // on-screen but physically hidden behind the camera/notch. Prefer the
-        // notch-safe slot nearest the center, immediately beside that hole.
-        if let left = screen.auxiliaryTopLeftArea,
-           let right = screen.auxiliaryTopRightArea,
-           left.width >= panelSize.width + 8,
-           right.width >= panelSize.width + 8 {
-            let leftX = left.maxX - panelSize.width - 8
-            let rightX = right.minX + 8
-            let leftDistance = abs((leftX + panelSize.width / 2) - frame.midX)
-            let rightDistance = abs((rightX + panelSize.width / 2) - frame.midX)
-            let x = leftDistance <= rightDistance ? leftX : rightX
-            let area = leftDistance <= rightDistance ? left : right
-            origin = NSPoint(
-                x: x,
-                y: area.minY + (area.height - panelSize.height) / 2
-            )
-        } else if menuBarHeight >= 18 {
-            // On a non-notch display, center vertically inside the actual
-            // menu-bar strip.
-            origin = NSPoint(
-                x: frame.midX - panelSize.width / 2,
-                y: visible.maxY + (menuBarHeight - panelSize.height) / 2
-            )
-        } else {
-            // Full-screen apps can remove the menu bar from visibleFrame. Keep
-            // the control at the top edge so it remains discoverable.
-            origin = NSPoint(
-                x: frame.midX - panelSize.width / 2,
-                y: frame.maxY - panelSize.height - 4
-            )
-        }
-        panel.setFrame(
-            NSRect(
-                x: origin.x,
-                y: origin.y,
-                width: panelSize.width,
-                height: panelSize.height
-            ),
-            display: true
-        )
-    }
-
-    private func positionMenuBarIconPanelIfScreenChanged() {
-        guard let screen = screenContainingPointer(),
-              menuBarScreenFrame != screen.frame else { return }
-        positionMenuBarIconPanel()
-    }
-
-    private func screenContainingPointer() -> NSScreen? {
-        let pointer = NSEvent.mouseLocation
-        return NSScreen.screens.first(where: { $0.frame.contains(pointer) })
-            ?? NSScreen.main
-            ?? NSScreen.screens.first
+        item.menu = menu
+        statusItem = item
     }
 
     func menuNeedsUpdate(_ menu: NSMenu) {
@@ -620,6 +528,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let status = NSMenuItem(title: statusText, action: nil, keyEquivalent: "")
         status.isEnabled = false
         menu.addItem(status)
+        if hidAccelerationController.compatibility != .available {
+            let compatibility = NSMenuItem(
+                title: hidAccelerationController.compatibility.userFacingDescription,
+                action: nil,
+                keyEquivalent: ""
+            )
+            compatibility.isEnabled = false
+            menu.addItem(compatibility)
+        }
         menu.addItem(.separator())
 
         if isAnyPreview {
@@ -706,7 +623,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
             if clock.isOnBreak {
                 let now = ProcessInfo.processInfo.systemUptime
-                let effect = hidAccelerationController.isActive ? "硬件加重" : "仅彗尾效果"
+                let effect: String
+                if hidAccelerationController.compatibility != .available {
+                    effect = "当前设备仅支持彗尾"
+                } else {
+                    effect = hidAccelerationController.isActive ? "硬件加重" : "仅彗尾效果"
+                }
                 return "休息中 · \(Self.format(clock.breakRemaining(now: now, idleTime: currentIdleTime()))) · \(effect)"
             }
             let minutes = max(1, Int(ceil(clock.remaining / 60)))
@@ -732,7 +654,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if clock.isOnBreak {
             let now = ProcessInfo.processInfo.systemUptime
             let effect: String
-            if hidAccelerationController.isSafetyDisabled {
+            if hidAccelerationController.compatibility != .available {
+                effect = "仅彗尾 · 当前设备不支持加重"
+            } else if hidAccelerationController.isSafetyDisabled {
                 effect = "加重已安全停用"
             } else {
                 effect = hidAccelerationController.isActive ? "鼠标加重" : "鼠标正常"
@@ -836,6 +760,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             hidAccelerationController.isActive ? "hid-on" : "hid-off",
             pointerController.isSafetyDisabled ? "tap-safe-off" : "tap-ready",
             hidAccelerationController.isSafetyDisabled ? "hid-safe-off" : "hid-ready",
+            hidAccelerationController.compatibility.rawValue,
         ].joined(separator: "|")
         guard state != lastDiagnosticState else { return }
         lastDiagnosticState = state
@@ -846,6 +771,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             "hid": hidAccelerationController.isActive ? "active" : "inactive",
             "eventTapSafety": pointerController.isSafetyDisabled ? "disabled" : "ready",
             "hidSafety": hidAccelerationController.isSafetyDisabled ? "disabled" : "ready",
+            "hidCompatibility": hidAccelerationController.compatibility.rawValue,
             "elapsedSeconds": String(Int(clock.elapsed)),
             "physicalWeight": String(format: "%.3f", Double(clock.weight)),
             "visualWeight": String(format: "%.3f", Double(activeVisualWeight)),
@@ -855,17 +781,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private static func format(_ interval: TimeInterval) -> String {
         let seconds = max(0, Int(ceil(interval)))
         return String(format: "%02d:%02d", seconds / 60, seconds % 60)
-    }
-}
-
-extension AppDelegate: MenuBarIconDelegate {
-    func menuBarIconPressed(from view: NSView) {
-        guard let menu = menuBarIconMenu else { return }
-        menu.popUp(
-            positioning: nil,
-            at: NSPoint(x: view.bounds.midX, y: view.bounds.minY - 4),
-            in: view
-        )
     }
 }
 
@@ -906,6 +821,7 @@ if let watchdogIndex = ProcessInfo.processInfo.arguments.firstIndex(of: "--hid-w
     let values = controller.currentValues()
     let mouseText = values.mouse.map { String($0) } ?? "unavailable"
     let trackpadText = values.trackpad.map { String($0) } ?? "unavailable"
+    print("compatibility=\(controller.compatibility.rawValue)")
     print("mouse=\(mouseText)")
     print("trackpad=\(trackpadText)")
 } else if ProcessInfo.processInfo.arguments.contains("--restore-hid") {

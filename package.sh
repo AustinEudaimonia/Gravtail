@@ -9,7 +9,7 @@ VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$PROJ
 APP_ZIP="$DIST_DIR/Gravtail-${VERSION}-macOS.zip"
 SOURCE_ZIP="$DIST_DIR/Gravtail-${VERSION}-source.zip"
 CHECKSUMS="$DIST_DIR/Gravtail-${VERSION}-SHA256SUMS.txt"
-SIGNING_IDENTITY_VALUE="${SIGNING_IDENTITY:-Heavy Cursor Local}"
+SIGNING_IDENTITY_VALUE="${SIGNING_IDENTITY:-Gravtail Local}"
 
 mkdir -p "$DIST_DIR"
 if [[ "$SIGNING_IDENTITY_VALUE" == "-" ]]; then

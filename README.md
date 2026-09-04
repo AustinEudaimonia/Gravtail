@@ -68,6 +68,12 @@ A deliberately small macOS menu bar app: the longer you use your Mac, the heavie
 Gravtail supports macOS 13 or later and builds a universal app for Apple
 silicon and Intel Macs. Install the Xcode Command Line Tools first.
 
+The physical HID cue is capability-detected at runtime because Apple does not
+publish that interface as a stable SDK API. If a macOS version or pointing
+device does not expose it, Gravtail keeps the comet and leaves native pointer
+input unchanged; the menu shows the compatibility status instead of silently
+retrying live input.
+
 ```sh
 ./test.sh
 ./scripts/ensure-local-signing-identity.sh
@@ -121,7 +127,7 @@ content, pointer coordinates, or browsing activity—in
 1. 从 GitHub Releases 下载并完整解压 `Gravtail-*-macOS.zip`。
 2. 按住 Control 点击 **安装 Gravtail.command**，选择“打开”。
 3. 安装程序会在当前用户的登录钥匙串中创建或复用 `Gravtail Local`，在本机重新签名，并把 App 安装到固定的 Applications 路径。
-4. 首次启动时，按住 Control 点击安装好的 `Gravtail.app`，选择“打开”。
+4. 安装完成后直接打开 `Gravtail.app`。安装器会先验证下载包和本地签名，再移除 App 的下载隔离标记，因此不再要求第二次按住 Control 打开。
 5. 点击顶部 Gravtail 图标 → **开启鼠标加重…**，在“系统设置 → 隐私与安全性 → 辅助功能”中打开 Gravtail。
 
 私钥只留在这台 Mac，不会上传给项目作者或 GitHub；证书也只被信任用于代码签名。安装脚本不能代替用户授予辅助功能权限。更新时先退出 Gravtail，再运行新版本中的同一个安装脚本；它会复用同一证书、Bundle ID 和安装路径，让 macOS 尽可能把更新识别为同一个 App。不要删除钥匙串中的 `Gravtail Local`。完整说明见 [COMMUNITY_INSTALL.md](COMMUNITY_INSTALL.md)。
@@ -155,10 +161,10 @@ open ".build/Gravtail.app" --args --preview-ui --preview-progress
 To use a named fixed self-signed identity, pass that identity explicitly:
 
 ```sh
-SIGNING_IDENTITY="Heavy Cursor Local" ./package.sh
+SIGNING_IDENTITY="Gravtail Local" ./package.sh
 ```
 
-维护者的私钥不会进入发布包。每个下载副本通过持续复用用户自己的本地证书，在该 Mac 上保持稳定身份。由于 App 没有经过 Apple 公证，两次“按住 Control 点击 → 打开”是这条免费发行路线无法省略的步骤。
+维护者的私钥不会进入发布包。每个下载副本通过持续复用用户自己的本地证书，在该 Mac 上保持稳定身份。由于 App 没有经过 Apple 公证，第一次运行下载得到的安装脚本时，“按住 Control 点击 → 打开”仍是免费发行路线无法省略的步骤；通过验证的 App 本身无需再重复一次。
 
 ## Attribution
 

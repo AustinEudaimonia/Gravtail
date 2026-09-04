@@ -1,0 +1,22 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test on ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-14, macos-15-intel]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run safety and compatibility checks
+        run: ./test.sh

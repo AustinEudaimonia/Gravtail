@@ -12,6 +12,18 @@ enum HeavyCursorConstants {
     static let pointerWarpGainThreshold: CGFloat = 0.995
 }
 
+enum MaintenancePolicy {
+    /// Diagnostic events are intentionally small, but a menu-bar app may run
+    /// for years. Keep one bounded current log and one previous generation.
+    static let maximumLogBytes = 512 * 1024
+    static let installerBackupsToKeep = 1
+
+    static func shouldRotateLog(currentBytes: Int, incomingBytes: Int) -> Bool {
+        guard currentBytes >= 0, incomingBytes >= 0 else { return false }
+        return currentBytes + incomingBytes > maximumLogBytes
+    }
+}
+
 enum CursorWeightingMode: Equatable {
     case none
     case software
