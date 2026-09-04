@@ -38,6 +38,16 @@ enum WeightCurve {
         // Squaring keeps the initial physical change nearly imperceptible.
         return 1 - (1 - HeavyCursorConstants.minimumGain) * clamped * clamped
     }
+
+    /// The comet is the app's always-visible heartbeat once a real work
+    /// session starts. Keep it subtle during the physically weightless half,
+    /// then let the physical weight curve take over continuously.
+    static func visualWeight(elapsed: TimeInterval, interval: TimeInterval) -> CGFloat {
+        guard interval > 0 else { return 0 }
+        let progress = CGFloat(max(0, min(1, elapsed / interval)))
+        let ambientComet = 0.16 + 0.08 * progress
+        return max(ambientComet, weight(elapsed: elapsed, interval: interval))
+    }
 }
 
 final class SessionClock {

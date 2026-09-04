@@ -30,6 +30,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var sessionInputBaselineUptime: TimeInterval
     private var isShowingOnboarding = false
     private var terminatingOldInstancePIDs = Set<pid_t>()
+    private var lastDiagnosticState = ""
 
     override init() {
         sessionInputBaselineUptime = launchUptime
@@ -83,6 +84,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if !isUIPreview {
             startPointerWeightIfPossible()
         }
+        DiagnosticLog.shared.record("launch", fields: [
+            "app": Bundle.main.bundlePath,
+            "version": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown",
+            "accessibility": pointerController.isTrusted ? "trusted" : "not-trusted",
+            "workMinutes": String(Int(clock.interval / 60)),
+            "breakMinutes": String(Int(clock.breakDuration / 60)),
+        ])
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(screensChanged),
@@ -143,7 +151,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
         alert.messageText = "什么时候让光标变重？"
-        alert.informativeText = "彗尾会在中途出现，并逐渐变重，直到提醒你起身活动。"
+        alert.informativeText = "第一次操作后会出现轻微彗尾；后半程逐渐变重，直到提醒你起身活动。"
         alert.addButton(withTitle: "60 分钟")
         alert.addButton(withTitle: "45 分钟")
         alert.addButton(withTitle: "90 分钟")
@@ -300,27 +308,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // perform native cursor hit testing, while the HID layer still carries
         // the physical "heavy" cue until the break is completed.
         let shouldApplyHardwareWeight = !isUIPreview
-            && pointerController.isTrusted
             && clock.weight > HeavyCursorConstants.pointerTapActivationWeight
         if shouldApplyHardwareWeight {
             hidAccelerationController.update(weight: clock.weight)
         } else {
             _ = hidAccelerationController.restore()
         }
+
+        recordDiagnosticState()
     }
 
     private var pointerTapIsActive = false
 
-    /// The break state intentionally renders no comet and no software pointer
-    /// warp. Preview launches are exempt so `--preview-45` continues to
-    /// demonstrate the full effect without waiting for a real break.
-    private var activeWeight: CGFloat {
-        guard !clock.isOnBreak || isAnyPreview else { return 0 }
-        return clock.weight
+    /// Visual feedback starts subtly with the first real input and remains at
+    /// full strength during the break. This is independent from Accessibility
+    /// permission; only the stronger software pointer transform needs it.
+    private var activeVisualWeight: CGFloat {
+        guard hasStartedWorkSession, !clock.isAway else { return 0 }
+        return WeightCurve.visualWeight(elapsed: clock.elapsed, interval: clock.interval)
     }
 
     private func renderTick() {
-        let weight = activeWeight
+        let weight = activeVisualWeight
         if weight > 0.005 {
             CometModel.shared.tick(weight: weight, now: CACurrentMediaTime())
         } else if !CometModel.shared.points.isEmpty {
@@ -411,7 +420,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let view = CometView(frame: NSRect(origin: .zero, size: drawingFrame.size))
             view.setAccessibilityElement(false)
             view.screenOrigin = drawingFrame.origin
-            view.weightProvider = { [weak self] in self?.clock.weight ?? 0 }
+            view.weightProvider = { [weak self] in self?.activeVisualWeight ?? 0 }
             window.contentView = view
             window.orderFrontRegardless()
             overlayWindows.append(window)
@@ -615,7 +624,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return "仅预览界面 · 鼠标加重未开启"
         }
         if !pointerController.isTrusted {
-            return "辅助功能未开启 · 仅彗尾效果"
+            if !hasStartedWorkSession {
+                return "等待首次操作 · 强加重未开启"
+            }
+            if clock.isOnBreak {
+                let now = ProcessInfo.processInfo.systemUptime
+                let effect = hidAccelerationController.isActive ? "硬件加重" : "仅彗尾效果"
+                return "休息中 · \(Self.format(clock.breakRemaining(now: now, idleTime: currentIdleTime()))) · \(effect)"
+            }
+            let minutes = max(1, Int(ceil(clock.remaining / 60)))
+            let effect = hidAccelerationController.isActive ? "硬件加重" : "彗尾已开启"
+            return "距离起身还有 \(minutes) 分钟 · \(effect) · 强加重未开启"
         }
         if !hidAccelerationController.lastOperationSucceeded,
            !hidAccelerationController.lastRollbackSucceeded {
@@ -639,7 +658,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let effect = hidAccelerationController.isActive ? "鼠标加重" : "鼠标正常"
             return "休息中 · \(Self.format(clock.breakRemaining(now: now, idleTime: currentIdleTime()))) · \(effect)"
         }
-        if !hidAccelerationController.lastOperationSucceeded && activeWeight > HeavyCursorConstants.pointerTapActivationWeight {
+        if !hidAccelerationController.lastOperationSucceeded && activeVisualWeight > HeavyCursorConstants.pointerTapActivationWeight {
             return "鼠标加重失败 · 仅彗尾效果"
         }
         if clock.remaining <= 0 {
@@ -688,6 +707,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func enablePermission() {
+        DiagnosticLog.shared.record("permission-request", fields: [
+            "accessibility": pointerController.isTrusted ? "trusted" : "not-trusted",
+        ])
         pointerController.requestPermission()
     }
 
@@ -705,6 +727,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return
         }
         pointerTapIsActive = pointerController.start()
+    }
+
+    private func recordDiagnosticState() {
+        let phase: String
+        if !hasStartedWorkSession {
+            phase = "waiting-for-input"
+        } else if clock.isAway {
+            phase = "away"
+        } else if clock.isOnBreak {
+            phase = "break"
+        } else if clock.weight > HeavyCursorConstants.pointerTapActivationWeight {
+            phase = "weighting"
+        } else {
+            phase = "early-work"
+        }
+
+        let state = [
+            phase,
+            pointerController.isTrusted ? "trusted" : "not-trusted",
+            pointerTapIsActive ? "tap-on" : "tap-off",
+            hidAccelerationController.isActive ? "hid-on" : "hid-off",
+        ].joined(separator: "|")
+        guard state != lastDiagnosticState else { return }
+        lastDiagnosticState = state
+        DiagnosticLog.shared.record("state", fields: [
+            "phase": phase,
+            "accessibility": pointerController.isTrusted ? "trusted" : "not-trusted",
+            "eventTap": pointerTapIsActive ? "active" : "inactive",
+            "hid": hidAccelerationController.isActive ? "active" : "inactive",
+            "elapsedSeconds": String(Int(clock.elapsed)),
+            "physicalWeight": String(format: "%.3f", Double(clock.weight)),
+            "visualWeight": String(format: "%.3f", Double(activeVisualWeight)),
+        ])
     }
 
     private static func format(_ interval: TimeInterval) -> String {
@@ -737,9 +792,26 @@ if ProcessInfo.processInfo.arguments.contains("--check-accessibility") {
     print("trackpad=\(trackpadText)")
 } else if ProcessInfo.processInfo.arguments.contains("--restore-hid") {
     let controller = HIDAccelerationController()
-    controller.restore()
+    let restored = controller.didRestoreOrphanedBackup
     _ = CGAssociateMouseAndMouseCursorPosition(1)
-    print("HID acceleration restored")
+    if restored {
+        print("HID acceleration restored from saved backup")
+    } else if controller.hadOrphanedBackup {
+        fputs("Saved HID backup could not be restored\n", stderr)
+        exit(1)
+    } else {
+        print("No saved HID backup; values unchanged")
+    }
+} else if let recoveryIndex = ProcessInfo.processInfo.arguments.firstIndex(of: "--restore-known-hid"),
+          ProcessInfo.processInfo.arguments.indices.contains(recoveryIndex + 1),
+          let value = Double(ProcessInfo.processInfo.arguments[recoveryIndex + 1]) {
+    let controller = HIDAccelerationController(restoreOrphanedBackup: false)
+    guard controller.restoreKnownValues(mouse: value, trackpad: value) else {
+        fputs("Known HID value could not be restored\n", stderr)
+        exit(1)
+    }
+    _ = CGAssociateMouseAndMouseCursorPosition(1)
+    print("HID acceleration restored to \(value)")
 } else {
     let application = NSApplication.shared
     let delegate = AppDelegate()

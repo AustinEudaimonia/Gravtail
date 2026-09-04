@@ -40,6 +40,8 @@ final class HIDAccelerationController {
     private(set) var isActive = false
     private(set) var lastOperationSucceeded = true
     private(set) var lastRollbackSucceeded = true
+    private(set) var hadOrphanedBackup = false
+    private(set) var didRestoreOrphanedBackup = false
 
     init(restoreOrphanedBackup: Bool = true) {
         handle = NXOpenEventStatus()
@@ -49,7 +51,11 @@ final class HIDAccelerationController {
     }
 
     deinit {
-        restore()
+        // A read-only diagnostic controller has no originals of its own. It
+        // must not clear another running app's persistent recovery backup.
+        if originalMouse != nil || originalTrackpad != nil {
+            restore()
+        }
         if handle != 0 {
             NXCloseEventStatus(handle)
         }
@@ -114,6 +120,11 @@ final class HIDAccelerationController {
             lastRollbackSucceeded = false
             return false
         }
+        guard originalMouse != nil || originalTrackpad != nil else {
+            isActive = false
+            lastWeight = -1
+            return true
+        }
         var success = true
         if let originalMouse { success = write(Key.mouse, originalMouse) && success }
         if let originalTrackpad { success = write(Key.trackpad, originalTrackpad) && success }
@@ -159,6 +170,7 @@ final class HIDAccelerationController {
             defaults.set(originalTrackpad, forKey: Key.trackpadBackup)
         }
         defaults.set(true, forKey: Key.hasBackup)
+        defaults.synchronize()
     }
 
     private func restoreOrphanedBackupIfNeeded() {
@@ -169,7 +181,8 @@ final class HIDAccelerationController {
             }
             return
         }
-        guard defaults.bool(forKey: Key.hasBackup) else { return }
+        hadOrphanedBackup = defaults.bool(forKey: Key.hasBackup)
+        guard hadOrphanedBackup else { return }
         var success = true
         if defaults.object(forKey: Key.mouseBackup) != nil {
             success = write(Key.mouse, defaults.double(forKey: Key.mouseBackup)) && success
@@ -179,6 +192,7 @@ final class HIDAccelerationController {
         }
         lastOperationSucceeded = success
         lastRollbackSucceeded = success
+        didRestoreOrphanedBackup = success
         if success {
             clearBackup()
         }
@@ -192,12 +206,26 @@ final class HIDAccelerationController {
 
     @discardableResult
     private func write(_ key: CFString, _ value: Double) -> Bool {
-        IOHIDSetAccelerationWithKey(handle, key, value) == KERN_SUCCESS
+        guard IOHIDSetAccelerationWithKey(handle, key, value) == KERN_SUCCESS,
+              let actual = read(key) else { return false }
+        return abs(actual - value) <= 0.001
     }
 
     private func clearBackup() {
         defaults.removeObject(forKey: Key.hasBackup)
         defaults.removeObject(forKey: Key.mouseBackup)
         defaults.removeObject(forKey: Key.trackpadBackup)
+        defaults.synchronize()
+    }
+
+    /// Emergency recovery for a known pre-launch value when an older build
+    /// has already lost its backup. Normal app behavior never calls this.
+    func restoreKnownValues(mouse: Double, trackpad: Double) -> Bool {
+        guard handle != 0 else { return false }
+        let success = write(Key.mouse, mouse) && write(Key.trackpad, trackpad)
+        if success {
+            clearBackup()
+        }
+        return success
     }
 }

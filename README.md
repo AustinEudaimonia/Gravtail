@@ -20,9 +20,9 @@ Gravtail 是一个轻量的 macOS 菜单栏应用。它不靠突然弹出的系�
 
 | 连续使用时间 | 视觉反馈 | 鼠标响应 |
 | --- | --- | --- |
-| 前半段 | 光标保持安静 | 保持原始灵敏度 |
+| 前半段 | 第一次真实输入后显示很轻的 comet | 保持原始灵敏度 |
 | 后半段 | comet 平滑变长、变粗，颜色逐渐变暖 | 逐步降低加速度 |
-| 达到设定时间 | 顶部居中的小胶囊提示起身 | 达到最重状态，最低约为原响应的 10% |
+| 达到设定时间 | 顶部居中的小胶囊提示起身，comet 保持最强 | 达到最重状态，强加重最低约为原响应的 10% |
 | 完成休息 | comet 和重量逐渐清除 | 恢复启动前保存的原始设置 |
 
 你可以选择 **45 / 60 / 90 分钟**的连续使用时间，以及 **3 / 5 / 10 分钟**的休息时长。应用启动或重置后，会等到第一次真实的键盘/鼠标输入才开始计时。每 15 分钟，屏幕上方会出现一个短暂的小胶囊，告诉你距离起身还剩多久；到点后胶囊会显示休息倒计时。键盘或鼠标输入会重新开始休息倒计时，完整休息后进入下一轮。
@@ -52,7 +52,7 @@ A deliberately small macOS menu bar app: the longer you use your Mac, the heavie
 
 - Choose a 45, 60, or 90 minute work interval.
 - Choose a 3, 5, or 10 minute break duration.
-- The first half of the session stays visually quiet.
+- After the first physical input, a subtle comet confirms that Gravtail is running while physical pointer response stays unchanged during the first half.
 - During the second half, a comet grows continuously and pointer response eases down to 10% at maximum weight.
 - Every 15 minutes, a four-second pill reports how long remains before it is time to move.
 - At the selected limit, the pill stays visible with a live break countdown and Quit action.
@@ -75,13 +75,13 @@ silicon and Intel Macs. Install the Xcode Command Line Tools first.
 open ".build/Gravtail.app"
 ```
 
-The comet works immediately. macOS Accessibility permission is required for
-global pointer weighting. Choose **开启鼠标加重…** from the Gravtail menu; it
-opens the exact System Settings → Privacy & Security → Accessibility pane.
-On current macOS versions this opens the settings pane directly instead of
-stacking a modal prompt; an older-system fallback prompt is throttled to one
-per app launch. Without that permission the comet still works, but Gravtail
-will not change mouse or trackpad settings.
+The comet works as soon as the first physical input starts a session. Gravtail
+can lower the system HID acceleration without Accessibility access, but macOS
+Accessibility permission is required for the stronger event-tap weighting that
+reaches the intended 10% response. Choose **开启鼠标加重…** from the Gravtail
+menu; macOS requests access for the exact running app and offers the direct
+System Settings → Privacy & Security → Accessibility route. The request is
+throttled to once per app launch so duplicate prompts cannot stack.
 
 When testing a fresh build from a new folder, make sure the exact
 `Gravtail.app` you launched is the enabled entry in this list. macOS can keep
@@ -103,6 +103,10 @@ events; window redraws, notifications, and changing message content do not
 count as work input. It cannot verify whether a person physically stood up.
 The configured break duration is therefore a practical inactivity-based proxy
 for taking a break.
+
+For troubleshooting, Gravtail records only state transitions—not keyboard
+content, pointer coordinates, or browsing activity—in
+`~/Library/Logs/Gravtail/Gravtail.log`.
 
 ## Download and install
 

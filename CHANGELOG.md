@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.4.6
+
+- Fixed the apparently inert launch state: a subtle comet now appears after
+  the first real input instead of staying completely invisible for half of the
+  work interval.
+- Kept the full comet visible during the break countdown while leaving the
+  native pointer and text I-beam behavior untouched.
+- Decoupled hardware acceleration reduction from Accessibility trust, so the
+  HID layer can still provide a physical cue when the stronger event-tap
+  weighting has not been authorized.
+- Changed the permission action to request authorization for the exact running
+  app once per launch instead of only opening a pane that may contain a stale
+  Gravtail entry.
+- Added transition-based runtime diagnostics at
+  `~/Library/Logs/Gravtail/Gravtail.log`.
+- Fixed a recovery-backup ownership bug where the read-only `--check-hid`
+  command could erase a running app's saved pre-weight acceleration values.
+- HID writes and restores now verify the value read back from macOS, and the
+  recovery command no longer claims success when no saved backup exists.
+
 ## 0.4.5
 
 - Opened the Accessibility permission flow directly in the correct System

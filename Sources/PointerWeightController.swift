@@ -30,18 +30,10 @@ final class PointerWeightController {
             return
         }
 
-        // Put the user in the exact pane that controls this permission. The
-        // generic System Settings URL often opens on "General", which leaves
-        // users unsure where Gravtail went.
-        if openAccessibilitySettings() {
-            // The modern System Settings pane is the least surprising and
-            // most stable authorization flow. Do not put a second modal
-            // prompt on top of it.
-            hasRequestedPermissionThisSession = true
-            return
-        }
-
-        guard !hasRequestedPermissionThisSession else { return }
+        // Ask macOS about this exact running bundle first. Merely opening the
+        // Accessibility pane can leave an enabled row for an older Gravtail
+        // copy while the current app remains untrusted. This prompt is
+        // throttled to once per process so it cannot stack repeatedly.
         hasRequestedPermissionThisSession = true
         let options = [
             kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true
