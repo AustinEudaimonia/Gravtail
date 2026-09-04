@@ -42,6 +42,11 @@ final class HIDAccelerationController {
     private(set) var lastRollbackSucceeded = true
     private(set) var hadOrphanedBackup = false
     private(set) var didRestoreOrphanedBackup = false
+    private(set) var isSafetyDisabled = false
+    /// Called after the original values are durably saved but before the first
+    /// HID write. Returning false prevents weighting entirely. The app uses
+    /// this to require an external crash-recovery watchdog.
+    var backupPreparedHandler: ((Double?, Double?) -> Bool)?
 
     init(restoreOrphanedBackup: Bool = true) {
         handle = NXOpenEventStatus()
@@ -65,11 +70,17 @@ final class HIDAccelerationController {
         (read(Key.mouse), read(Key.trackpad))
     }
 
+    var recoveryValues: (mouse: Double?, trackpad: Double?) {
+        (originalMouse, originalTrackpad)
+    }
+
     func update(weight: CGFloat) {
+        guard !isSafetyDisabled else { return }
         guard handle != 0 else {
             isActive = false
             lastOperationSucceeded = false
             lastRollbackSucceeded = false
+            isSafetyDisabled = true
             return
         }
         let clamped = max(0, min(1, weight))
@@ -79,31 +90,55 @@ final class HIDAccelerationController {
             return
         }
 
-        captureOriginalValuesIfNeeded()
+        guard captureOriginalValuesIfNeeded() else {
+            isActive = false
+            lastOperationSucceeded = false
+            lastRollbackSucceeded = true
+            isSafetyDisabled = true
+            return
+        }
         guard originalMouse != nil || originalTrackpad != nil else {
             isActive = false
             lastOperationSucceeded = false
+            isSafetyDisabled = true
             return
         }
         guard abs(lastWeight - clamped) > 0.005 else { return }
 
         var changed: [(key: CFString, value: Double)] = []
 
-        if let originalMouse {
-            let target = max(0, originalMouse * Double(1 - clamped))
+        // A zero or negative acceleration value is not a safe weighting
+        // target on every macOS/input-device combination. Leave an already
+        // non-positive setting untouched; otherwise preserve at least the
+        // product's 10% minimum response.
+        if let originalMouse,
+           let target = WeightCurve.hardwareAccelerationTarget(original: originalMouse, weight: clamped) {
+            changed.append((Key.mouse, originalMouse))
             guard write(Key.mouse, target) else {
                 failUpdate(afterRollingBack: changed)
                 return
             }
-            changed.append((Key.mouse, originalMouse))
         }
-        if let originalTrackpad {
-            let target = max(0, originalTrackpad * Double(1 - clamped))
+        if let originalTrackpad,
+           let target = WeightCurve.hardwareAccelerationTarget(original: originalTrackpad, weight: clamped) {
+            changed.append((Key.trackpad, originalTrackpad))
             guard write(Key.trackpad, target) else {
                 failUpdate(afterRollingBack: changed)
                 return
             }
-            changed.append((Key.trackpad, originalTrackpad))
+        }
+
+        // No positive value means there is nothing safe for this private HID
+        // path to change. Fail open rather than guessing a device setting.
+        guard !changed.isEmpty else {
+            isActive = false
+            lastOperationSucceeded = false
+            lastRollbackSucceeded = true
+            originalMouse = nil
+            originalTrackpad = nil
+            clearBackup()
+            isSafetyDisabled = true
+            return
         }
 
         lastOperationSucceeded = true
@@ -121,8 +156,16 @@ final class HIDAccelerationController {
             return false
         }
         guard originalMouse != nil || originalTrackpad != nil else {
+            if defaults.bool(forKey: Key.hasBackup) {
+                restoreOrphanedBackupIfNeeded()
+                isActive = false
+                lastWeight = -1
+                return didRestoreOrphanedBackup
+            }
             isActive = false
             lastWeight = -1
+            lastOperationSucceeded = true
+            lastRollbackSucceeded = true
             return true
         }
         var success = true
@@ -132,6 +175,9 @@ final class HIDAccelerationController {
         isActive = false
         lastOperationSucceeded = success
         lastRollbackSucceeded = success
+        if !success {
+            isSafetyDisabled = true
+        }
         if success {
             originalMouse = nil
             originalTrackpad = nil
@@ -151,17 +197,26 @@ final class HIDAccelerationController {
         lastWeight = -1
         isActive = false
         lastRollbackSucceeded = rollbackSucceeded
-        // The update failed even if the rollback succeeded; this lets the app
-        // surface a real failure while it retries on the next logic tick.
+        // The update failed even if the rollback succeeded. Disable HID
+        // weighting for this session instead of retrying against live input.
         lastOperationSucceeded = false
+        isSafetyDisabled = true
     }
 
-    private func captureOriginalValuesIfNeeded() {
-        guard originalMouse == nil && originalTrackpad == nil else { return }
+    func resetSafetyLockout() {
+        isSafetyDisabled = false
+    }
+
+    func disableForSafety() {
+        isSafetyDisabled = true
+    }
+
+    private func captureOriginalValuesIfNeeded() -> Bool {
+        guard originalMouse == nil && originalTrackpad == nil else { return true }
         originalMouse = read(Key.mouse)
         originalTrackpad = read(Key.trackpad)
 
-        guard originalMouse != nil || originalTrackpad != nil else { return }
+        guard originalMouse != nil || originalTrackpad != nil else { return false }
 
         if let originalMouse {
             defaults.set(originalMouse, forKey: Key.mouseBackup)
@@ -171,6 +226,15 @@ final class HIDAccelerationController {
         }
         defaults.set(true, forKey: Key.hasBackup)
         defaults.synchronize()
+
+        if let backupPreparedHandler,
+           !backupPreparedHandler(originalMouse, originalTrackpad) {
+            originalMouse = nil
+            originalTrackpad = nil
+            clearBackup()
+            return false
+        }
+        return true
     }
 
     private func restoreOrphanedBackupIfNeeded() {
@@ -193,6 +257,9 @@ final class HIDAccelerationController {
         lastOperationSucceeded = success
         lastRollbackSucceeded = success
         didRestoreOrphanedBackup = success
+        if !success {
+            isSafetyDisabled = true
+        }
         if success {
             clearBackup()
         }
@@ -220,12 +287,21 @@ final class HIDAccelerationController {
 
     /// Emergency recovery for a known pre-launch value when an older build
     /// has already lost its backup. Normal app behavior never calls this.
-    func restoreKnownValues(mouse: Double, trackpad: Double) -> Bool {
+    func restoreKnownValues(mouse: Double?, trackpad: Double?) -> Bool {
         guard handle != 0 else { return false }
-        let success = write(Key.mouse, mouse) && write(Key.trackpad, trackpad)
-        if success {
+        var attempted = false
+        var success = true
+        if let mouse {
+            attempted = true
+            success = write(Key.mouse, mouse) && success
+        }
+        if let trackpad {
+            attempted = true
+            success = write(Key.trackpad, trackpad) && success
+        }
+        if attempted && success {
             clearBackup()
         }
-        return success
+        return attempted && success
     }
 }

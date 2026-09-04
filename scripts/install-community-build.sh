@@ -42,6 +42,16 @@ print "1/4  准备这台 Mac 的 Gravtail 本地签名…"
 stage_dir="$(mktemp -d "${INSTALL_ROOT}/.gravtail-install.XXXXXX")"
 trap 'rm -rf "${stage_dir}"' EXIT
 staged_app="${stage_dir}/Gravtail.app"
+backup_app=""
+
+restore_previous_install() {
+  if [[ -e "${TARGET_APP}" ]]; then
+    mv "${TARGET_APP}" "${stage_dir}/Gravtail.failed.app" 2>/dev/null || true
+  fi
+  if [[ -n "${backup_app}" && -e "${backup_app}" ]]; then
+    mv "${backup_app}" "${TARGET_APP}" || return 1
+  fi
+}
 
 print "2/4  复制并使用本地身份重新签名…"
 ditto "${SOURCE_APP}" "${staged_app}"
@@ -61,12 +71,21 @@ if [[ -e "${TARGET_APP}" ]]; then
   mv "${TARGET_APP}" "${backup_app}"
   print "旧版本已保留在：${backup_app}"
 fi
-mv "${staged_app}" "${TARGET_APP}"
+if ! mv "${staged_app}" "${TARGET_APP}"; then
+  restore_previous_install || true
+  fail "新版本无法放入 Applications，已尝试恢复旧版本。"
+fi
 
 print "4/4  验证安装结果…"
-codesign --verify --deep --strict "${TARGET_APP}"
-installed_bundle_id="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "${TARGET_APP}/Contents/Info.plist")"
-[[ "${installed_bundle_id}" == "${EXPECTED_BUNDLE_ID}" ]] || fail "安装后的 Bundle ID 校验失败。"
+if ! codesign --verify --deep --strict "${TARGET_APP}"; then
+  restore_previous_install || true
+  fail "安装后的签名校验失败，已恢复旧版本。"
+fi
+installed_bundle_id="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "${TARGET_APP}/Contents/Info.plist" 2>/dev/null || true)"
+if [[ "${installed_bundle_id}" != "${EXPECTED_BUNDLE_ID}" ]]; then
+  restore_previous_install || true
+  fail "安装后的 Bundle ID 校验失败，已恢复旧版本。"
+fi
 
 print ""
 print "Gravtail 已安装并绑定到这台 Mac 的本地签名。"

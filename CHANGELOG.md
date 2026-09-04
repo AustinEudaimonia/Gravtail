@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.4.8
+
+- Fixed a critical pointer-freeze bug caused by applying the software event-
+  tap gain and system HID acceleration reduction at the same time.
+- Made cursor weighting mutually exclusive: precise software weighting during
+  active work, native-cursor HID weighting only during the break countdown.
+- Bounded the HID path to the same 10% minimum response as the software path;
+  Gravtail never intentionally writes a zero acceleration value.
+- Explicitly re-associated the physical mouse after every software cursor
+  warp and made invalid gain/coordinate states fail open.
+- Added per-session circuit breakers: a disabled event tap or failed HID
+  operation stays off instead of retrying against live user input.
+- Added an independent HID recovery watchdog that restores the saved mouse
+  and trackpad values if the main app crashes or is force-killed.
+- Made HID updates fully transactional, including rollback of the device whose
+  write succeeded but read-back verification failed.
+- Made community updates roll back to the previous app if final installation
+  verification fails.
+- Added policy tests that fail if the unsafe dual-weighting path is restored.
+
 ## 0.4.7
 
 - Replaced the fragile shared self-signed download flow with a community

@@ -1,5 +1,6 @@
 import Cocoa
 import ApplicationServices
+import Darwin
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let settings = UserDefaults.standard
@@ -15,6 +16,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let pointerController = PointerWeightController()
     private let hidAccelerationController = HIDAccelerationController()
     private let breakReminder = BreakReminderPanel()
+    private var hidRecoveryWatchdog: Process?
 
     private var menuBarIconPanel: NSPanel?
     private var menuBarIconView: MenuBarIconView?
@@ -67,6 +69,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         pointerController.gainProvider = { [weak self] in
             self?.isUIPreview == true ? 1 : (self?.clock.pointerGain ?? 1)
+        }
+        hidAccelerationController.backupPreparedHandler = { [weak self] mouse, trackpad in
+            self?.startHIDRecoveryWatchdog(mouse: mouse, trackpad: trackpad) ?? false
         }
 
         if isAnyPreview {
@@ -127,7 +132,54 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func restoreHardware() {
         pointerController.stop()
-        _ = hidAccelerationController.restore()
+        if hidAccelerationController.restore() {
+            stopHIDRecoveryWatchdog()
+        } else {
+            DiagnosticLog.shared.record("hid-restore-deferred-to-watchdog")
+        }
+    }
+
+    /// Start an independent copy of the executable before the first HID write.
+    /// If this app crashes or is force-killed, the child notices that the
+    /// parent PID disappeared and restores the exact pre-weight values.
+    private func startHIDRecoveryWatchdog(mouse: Double?, trackpad: Double?) -> Bool {
+        if let hidRecoveryWatchdog, hidRecoveryWatchdog.isRunning {
+            return true
+        }
+        guard mouse != nil || trackpad != nil,
+              let executableURL = Bundle.main.executableURL else { return false }
+
+        let process = Process()
+        process.executableURL = executableURL
+        process.arguments = [
+            "--hid-watchdog",
+            String(ProcessInfo.processInfo.processIdentifier),
+            mouse.map { String(format: "%.17g", $0) } ?? "none",
+            trackpad.map { String(format: "%.17g", $0) } ?? "none",
+        ]
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        do {
+            try process.run()
+            hidRecoveryWatchdog = process
+            DiagnosticLog.shared.record("hid-watchdog-started", fields: [
+                "pid": String(process.processIdentifier),
+            ])
+            return true
+        } catch {
+            DiagnosticLog.shared.record("hid-watchdog-failed", fields: [
+                "error": String(describing: error),
+            ])
+            return false
+        }
+    }
+
+    private func stopHIDRecoveryWatchdog() {
+        guard let process = hidRecoveryWatchdog else { return }
+        if process.isRunning {
+            process.terminate()
+        }
+        hidRecoveryWatchdog = nil
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
@@ -250,6 +302,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         )
         let returnedFromBreak = wasAway && !clock.isAway
         if recovered {
+            pointerController.resetSafetyLockout()
+            hidAccelerationController.resetSafetyLockout()
             CometModel.shared.clear()
             needsFinalClear = true
             hasShownBreakReminder = false
@@ -278,41 +332,63 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
         }
 
-        // Once the work interval ends, the user must be able to move the
-        // native cursor over text and click normally while the break timer
-        // counts down. Input during the break is still observed by the HID
-        // clock and restarts the inactivity countdown; it is simply not
-        // transformed by the software resistance tap.
-        let shouldRunPointerWeight = !isUIPreview
-            && !clock.isOnBreak
-            && pointerController.isTrusted
-            && clock.weight > HeavyCursorConstants.pointerTapActivationWeight
+        let weightingMode = CursorWeightingPolicy.mode(
+            isUIPreview: isUIPreview,
+            isOnBreak: clock.isOnBreak,
+            isAccessibilityTrusted: pointerController.isTrusted,
+            weight: clock.weight
+        )
 
-        if shouldRunPointerWeight {
-            // Do not install the global event tap during onboarding or while
-            // the pointer is still effectively weightless. This is important
-            // during the first Accessibility grant, when System Settings is
-            // being controlled by the mouse at the same time.
-            if !pointerTapIsActive {
-                pointerTapIsActive = pointerController.start()
+        // The ordering here is a safety invariant: restore the outgoing
+        // implementation before enabling the incoming one. The old dual-path
+        // behavior compounded both gains and could pin the pointer at zero.
+        switch weightingMode {
+        case .software:
+            let restored = hidAccelerationController.restore()
+            if restored {
+                stopHIDRecoveryWatchdog()
             }
-        } else {
+            if restored,
+               !pointerController.isSafetyDisabled,
+               !pointerTapIsActive {
+                pointerTapIsActive = pointerController.start()
+            } else if !restored || pointerController.isSafetyDisabled {
+                if pointerTapIsActive {
+                    pointerController.stop()
+                }
+                pointerTapIsActive = false
+            }
+        case .hardware:
             if pointerTapIsActive {
                 pointerController.stop()
             }
             pointerTapIsActive = false
-        }
-
-        // Keep the system-wide mouse and trackpad acceleration reduced through
-        // the break reminder. The software event tap is stopped so AppKit can
-        // perform native cursor hit testing, while the HID layer still carries
-        // the physical "heavy" cue until the break is completed.
-        let shouldApplyHardwareWeight = !isUIPreview
-            && clock.weight > HeavyCursorConstants.pointerTapActivationWeight
-        if shouldApplyHardwareWeight {
-            hidAccelerationController.update(weight: clock.weight)
-        } else {
-            _ = hidAccelerationController.restore()
+            if hidAccelerationController.isActive,
+               hidRecoveryWatchdog?.isRunning != true {
+                let originals = hidAccelerationController.recoveryValues
+                if !startHIDRecoveryWatchdog(
+                    mouse: originals.mouse,
+                    trackpad: originals.trackpad
+                ) {
+                    _ = hidAccelerationController.restore()
+                    hidAccelerationController.disableForSafety()
+                }
+            }
+            if hidAccelerationController.isSafetyDisabled {
+                if hidAccelerationController.restore() {
+                    stopHIDRecoveryWatchdog()
+                }
+            } else {
+                hidAccelerationController.update(weight: clock.weight)
+            }
+        case .none:
+            if pointerTapIsActive {
+                pointerController.stop()
+            }
+            pointerTapIsActive = false
+            if hidAccelerationController.restore() {
+                stopHIDRecoveryWatchdog()
+            }
         }
 
         recordDiagnosticState()
@@ -391,6 +467,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func screensChanged() {
         rebuildOverlayWindows()
         positionMenuBarIconPanel()
+        breakReminder.screenConfigurationChanged()
     }
 
     private func rebuildOverlayWindows() {
@@ -645,21 +722,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 return "休息完成 · 移动鼠标开始新一轮"
             }
             if clock.elapsed >= clock.interval {
-                if !pointerTapIsActive {
-                    return "该起身了 · 仅彗尾效果"
-                }
-                return hidAccelerationController.isActive ? "该起身了 · 鼠标加重" : "该起身了 · 软件加重"
+                return hidAccelerationController.isActive
+                    ? "该起身了 · 鼠标加重"
+                    : "该起身了 · 仅彗尾效果"
             }
             return "45 分钟预览 · 正在变重"
         }
         if clock.isAway { return "休息完成 · 移动鼠标开始新一轮" }
         if clock.isOnBreak {
             let now = ProcessInfo.processInfo.systemUptime
-            let effect = hidAccelerationController.isActive ? "鼠标加重" : "鼠标正常"
+            let effect: String
+            if hidAccelerationController.isSafetyDisabled {
+                effect = "加重已安全停用"
+            } else {
+                effect = hidAccelerationController.isActive ? "鼠标加重" : "鼠标正常"
+            }
             return "休息中 · \(Self.format(clock.breakRemaining(now: now, idleTime: currentIdleTime()))) · \(effect)"
         }
-        if !hidAccelerationController.lastOperationSucceeded && activeVisualWeight > HeavyCursorConstants.pointerTapActivationWeight {
-            return "鼠标加重失败 · 仅彗尾效果"
+        if pointerController.isSafetyDisabled {
+            return "软件加重已安全停用 · 重置本轮后重试"
         }
         if clock.remaining <= 0 {
             let now = ProcessInfo.processInfo.systemUptime
@@ -696,6 +777,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Restore synchronously so the next pointer event is never processed
         // by a stale weighting transform.
         restoreHardware()
+        pointerController.resetSafetyLockout()
+        hidAccelerationController.resetSafetyLockout()
         hasStartedWorkSession = false
         clock.reset(startingAt: nil)
         sessionInputBaselineUptime = ProcessInfo.processInfo.systemUptime
@@ -719,10 +802,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func startPointerWeightIfPossible() {
-        guard !isUIPreview,
-              !clock.isOnBreak,
-              pointerController.isTrusted,
-              clock.weight > HeavyCursorConstants.pointerTapActivationWeight else {
+        let mode = CursorWeightingPolicy.mode(
+            isUIPreview: isUIPreview,
+            isOnBreak: clock.isOnBreak,
+            isAccessibilityTrusted: pointerController.isTrusted,
+            weight: clock.weight
+        )
+        guard mode == .software else {
             pointerTapIsActive = false
             return
         }
@@ -748,6 +834,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             pointerController.isTrusted ? "trusted" : "not-trusted",
             pointerTapIsActive ? "tap-on" : "tap-off",
             hidAccelerationController.isActive ? "hid-on" : "hid-off",
+            pointerController.isSafetyDisabled ? "tap-safe-off" : "tap-ready",
+            hidAccelerationController.isSafetyDisabled ? "hid-safe-off" : "hid-ready",
         ].joined(separator: "|")
         guard state != lastDiagnosticState else { return }
         lastDiagnosticState = state
@@ -756,6 +844,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             "accessibility": pointerController.isTrusted ? "trusted" : "not-trusted",
             "eventTap": pointerTapIsActive ? "active" : "inactive",
             "hid": hidAccelerationController.isActive ? "active" : "inactive",
+            "eventTapSafety": pointerController.isSafetyDisabled ? "disabled" : "ready",
+            "hidSafety": hidAccelerationController.isSafetyDisabled ? "disabled" : "ready",
             "elapsedSeconds": String(Int(clock.elapsed)),
             "physicalWeight": String(format: "%.3f", Double(clock.weight)),
             "visualWeight": String(format: "%.3f", Double(activeVisualWeight)),
@@ -779,7 +869,35 @@ extension AppDelegate: MenuBarIconDelegate {
     }
 }
 
-if ProcessInfo.processInfo.arguments.contains("--check-accessibility") {
+if let watchdogIndex = ProcessInfo.processInfo.arguments.firstIndex(of: "--hid-watchdog"),
+   ProcessInfo.processInfo.arguments.indices.contains(watchdogIndex + 3) {
+    let arguments = ProcessInfo.processInfo.arguments
+    guard let parentPID = Int32(arguments[watchdogIndex + 1]), parentPID > 1 else {
+        exit(2)
+    }
+    let mouse = Double(arguments[watchdogIndex + 2])
+    let trackpad = Double(arguments[watchdogIndex + 3])
+
+    // Remain independent of AppKit. SIGKILL and crashes bypass
+    // applicationWillTerminate, so watch the parent from a separate process.
+    while true {
+        errno = 0
+        if kill(parentPID, 0) == 0 || errno == EPERM {
+            usleep(200_000)
+            continue
+        }
+        break
+    }
+
+    let controller = HIDAccelerationController(restoreOrphanedBackup: false)
+    let restored = controller.restoreKnownValues(mouse: mouse, trackpad: trackpad)
+    _ = CGAssociateMouseAndMouseCursorPosition(1)
+    DiagnosticLog.shared.record(
+        restored ? "hid-watchdog-restored" : "hid-watchdog-restore-failed",
+        fields: ["parentPID": String(parentPID)]
+    )
+    exit(restored ? 0 : 1)
+} else if ProcessInfo.processInfo.arguments.contains("--check-accessibility") {
     print(AXIsProcessTrusted() ? "trusted" : "not-trusted")
 } else if ProcessInfo.processInfo.arguments.contains("--check-hid") {
     // Diagnostics must be read-only; normal app launches still restore an

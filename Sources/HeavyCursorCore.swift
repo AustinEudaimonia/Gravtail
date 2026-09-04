@@ -12,6 +12,35 @@ enum HeavyCursorConstants {
     static let pointerWarpGainThreshold: CGFloat = 0.995
 }
 
+enum CursorWeightingMode: Equatable {
+    case none
+    case software
+    case hardware
+}
+
+enum CursorWeightingPolicy {
+    /// Exactly one pointer-weighting implementation may own cursor movement
+    /// at a time. Applying the event-tap gain and HID acceleration together
+    /// compounds the two curves and can reduce the effective movement to
+    /// zero. The break uses only HID so AppKit retains native cursor shapes;
+    /// active work uses only the more precise event-tap transform.
+    static func mode(
+        isUIPreview: Bool,
+        isOnBreak: Bool,
+        isAccessibilityTrusted: Bool,
+        weight: CGFloat
+    ) -> CursorWeightingMode {
+        guard !isUIPreview,
+              weight > HeavyCursorConstants.pointerTapActivationWeight else {
+            return .none
+        }
+        if isOnBreak {
+            return .hardware
+        }
+        return isAccessibilityTrusted ? .software : .none
+    }
+}
+
 enum ReminderSchedule {
     static let progressInterval: TimeInterval = 15 * 60
 
@@ -37,6 +66,18 @@ enum WeightCurve {
         let clamped = max(0, min(1, weight))
         // Squaring keeps the initial physical change nearly imperceptible.
         return 1 - (1 - HeavyCursorConstants.minimumGain) * clamped * clamped
+    }
+
+    /// The HID path is used only during the break, never together with the
+    /// software event tap. Reusing the same bounded curve guarantees the
+    /// hardware acceleration value cannot be reduced to zero.
+    static func hardwareScale(for weight: CGFloat) -> CGFloat {
+        pointerGain(for: weight)
+    }
+
+    static func hardwareAccelerationTarget(original: Double, weight: CGFloat) -> Double? {
+        guard original.isFinite, original > 0 else { return nil }
+        return original * Double(hardwareScale(for: weight))
     }
 
     /// The comet is the app's always-visible heartbeat once a real work

@@ -19,8 +19,54 @@ enum HeavyCursorCoreTests {
         expect(abs(WeightCurve.pointerGain(for: 1) - 0.10) < 0.001, "full weight caps at 10 percent gain")
         expect(WeightCurve.visualWeight(elapsed: 0, interval: interval) >= 0.16, "started session has a visible comet immediately")
         expect(WeightCurve.visualWeight(elapsed: interval, interval: interval) == 1, "deadline keeps the comet at full strength")
+        expect(abs(WeightCurve.hardwareScale(for: 1) - 0.10) < 0.001, "hardware weight never reaches zero")
+        expect(
+            abs((WeightCurve.hardwareAccelerationTarget(original: 0.6875, weight: 1) ?? 0) - 0.06875) < 0.0001,
+            "maximum hardware weight preserves ten percent of the original value"
+        )
+        expect(
+            WeightCurve.hardwareAccelerationTarget(original: 0, weight: 1) == nil,
+            "unsafe non-positive HID values fail open"
+        )
         expect(HeavyCursorConstants.pointerTapActivationWeight > 0, "pointer tap waits for meaningful weight")
         expect(HeavyCursorConstants.pointerWarpGainThreshold < 1, "near-one gain skips cursor warp")
+
+        expect(
+            CursorWeightingPolicy.mode(
+                isUIPreview: false,
+                isOnBreak: false,
+                isAccessibilityTrusted: true,
+                weight: 0.5
+            ) == .software,
+            "active work uses only software weighting"
+        )
+        expect(
+            CursorWeightingPolicy.mode(
+                isUIPreview: false,
+                isOnBreak: true,
+                isAccessibilityTrusted: true,
+                weight: 1
+            ) == .hardware,
+            "break uses only native-cursor hardware weighting"
+        )
+        expect(
+            CursorWeightingPolicy.mode(
+                isUIPreview: false,
+                isOnBreak: false,
+                isAccessibilityTrusted: false,
+                weight: 1
+            ) == .none,
+            "untrusted active work fails open"
+        )
+        expect(
+            CursorWeightingPolicy.mode(
+                isUIPreview: true,
+                isOnBreak: true,
+                isAccessibilityTrusted: true,
+                weight: 1
+            ) == .none,
+            "UI preview never changes pointer behavior"
+        )
 
         let fortyFiveMinutes: TimeInterval = 45 * 60
         expect(ReminderSchedule.progressMark(elapsed: 14 * 60 + 59, workInterval: fortyFiveMinutes) == 0, "no reminder before fifteen minutes")

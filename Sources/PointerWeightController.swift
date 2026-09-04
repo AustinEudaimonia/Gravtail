@@ -16,6 +16,10 @@ final class PointerWeightController {
     /// stack duplicate macOS prompts and make the user think authorization is
     /// broken.
     private var hasRequestedPermissionThisSession = false
+    /// If macOS disables the tap, keep it disabled for the rest of the work
+    /// session. Re-enabling a repeatedly timing-out tap can make pointer input
+    /// stutter or appear locked. A reset/new session explicitly clears this.
+    private(set) var isSafetyDisabled = false
     var gainProvider: () -> CGFloat = { 1 }
 
     var isTrusted: Bool {
@@ -52,7 +56,7 @@ final class PointerWeightController {
     @discardableResult
     func start() -> Bool {
         stop()
-        guard isTrusted else { return false }
+        guard isTrusted, !isSafetyDisabled else { return false }
 
         let types: [CGEventType] = [
             .mouseMoved,
@@ -69,9 +73,14 @@ final class PointerWeightController {
             let controller = Unmanaged<PointerWeightController>.fromOpaque(userInfo).takeUnretainedValue()
 
             if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+                controller.isSafetyDisabled = true
                 if let tap = controller.eventTap {
-                    CGEvent.tapEnable(tap: tap, enable: true)
+                    CGEvent.tapEnable(tap: tap, enable: false)
                 }
+                _ = CGAssociateMouseAndMouseCursorPosition(1)
+                DiagnosticLog.shared.record("event-tap-fail-open", fields: [
+                    "reason": type == .tapDisabledByTimeout ? "timeout" : "user-input",
+                ])
                 return Unmanaged.passUnretained(event)
             }
 
@@ -100,6 +109,10 @@ final class PointerWeightController {
         return true
     }
 
+    func resetSafetyLockout() {
+        isSafetyDisabled = false
+    }
+
     func stop() {
         if let source = runLoopSource {
             CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
@@ -123,7 +136,14 @@ final class PointerWeightController {
             return
         }
 
-        let gain = max(HeavyCursorConstants.minimumGain, min(1, gainProvider()))
+        let requestedGain = gainProvider()
+        guard requestedGain.isFinite else {
+            // Invalid state must always fail open: preserve the native event
+            // instead of ever sending a NaN coordinate to WindowServer.
+            lastOutputLocation = incoming
+            return
+        }
+        let gain = max(HeavyCursorConstants.minimumGain, min(1, requestedGain))
         if gain >= HeavyCursorConstants.pointerWarpGainThreshold {
             // The event tap may briefly be active as the weight curve starts,
             // but a nearly-one gain does not need a system-level warp. Avoid
@@ -133,6 +153,10 @@ final class PointerWeightController {
         }
         let deltaX = incoming.x - previous.x
         let deltaY = incoming.y - previous.y
+        guard deltaX.isFinite, deltaY.isFinite else {
+            lastOutputLocation = incoming
+            return
+        }
         let output = CGPoint(
             x: previous.x + deltaX * gain,
             y: previous.y + deltaY * gain
@@ -143,7 +167,12 @@ final class PointerWeightController {
         // it back to the weighted location creates the physical resistance the
         // product promises. This API does not generate another mouse event, so
         // it cannot recurse into this event tap.
-        if CGWarpMouseCursorPosition(output) == .success {
+        let warpResult = CGWarpMouseCursorPosition(output)
+        // Explicitly reconnect after every warp. Gravtail never asks macOS to
+        // disconnect the physical device, but making the association explicit
+        // prevents a transient WindowServer state from outliving this event.
+        _ = CGAssociateMouseAndMouseCursorPosition(1)
+        if warpResult == .success {
             event.location = output
             event.setIntegerValueField(
                 .mouseEventDeltaX,
@@ -155,6 +184,8 @@ final class PointerWeightController {
             )
             lastOutputLocation = output
         } else {
+            // One more best-effort recovery before passing the native event.
+            _ = CGAssociateMouseAndMouseCursorPosition(1)
             lastOutputLocation = incoming
         }
     }

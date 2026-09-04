@@ -88,11 +88,17 @@ When testing a fresh build from a new folder, make sure the exact
 an older Gravtail entry enabled while treating a newly moved or rebuilt copy
 as a separate accessibility client.
 
-Gravtail temporarily lowers the active mouse and trackpad acceleration
-while the cursor is heavy, backs up the original values first, and restores
-them after a completed break or normal quit. If the process is force-killed,
-launch it once more so the saved acceleration backup can be restored. A local
-build also exposes an explicit emergency command:
+Gravtail never applies its two weighting implementations at the same time:
+the precise software transform is used during active work, and the native-
+cursor HID path is used only during the break countdown so text I-beam hit
+testing remains intact. Both paths preserve at least 10% response; Gravtail
+never intentionally writes zero acceleration. The original HID values are
+backed up before a change and restored after a completed break or normal quit.
+Before the first HID change, Gravtail starts a small independent recovery
+watchdog. If the main app crashes or is force-killed during a break, the
+watchdog restores the saved values automatically. A persistent backup remains
+as a second recovery layer. A local build also exposes an explicit emergency
+command:
 
 ```sh
 ".build/Gravtail.app/Contents/MacOS/HeavyCursor" --restore-hid

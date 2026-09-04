@@ -135,6 +135,12 @@ final class BreakReminderPanel: NSObject {
         })
     }
 
+    func screenConfigurationChanged() {
+        guard isVisible else { return }
+        panel.setFrameOrigin(restingOrigin())
+        updatePointerInteraction()
+    }
+
     @objc private func quitPressed() {
         onQuit?()
     }
