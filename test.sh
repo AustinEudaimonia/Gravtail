@@ -41,4 +41,14 @@ if ! grep -q 'certificate leaf = H' "$PROJECT_DIR/scripts/install-community-buil
   exit 1
 fi
 
+backup_names=(
+  "Gravtail.previous-20260101-000000-1.app"
+  "Gravtail.previous-20260102-000000-2.app"
+)
+backup_names=("${(@On)backup_names}")
+if [[ "${backup_names[1]}" != *20260102* ]]; then
+  print -u2 "FAIL: newest installer backup must sort first"
+  exit 1
+fi
+
 print "Project checks passed"
