@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.19
+
+- Add a visible, clickable Gravtail product-mark launcher centered in the
+  menu-bar strip as a fallback for macOS configurations that hide native
+  third-party status items.
+- Keep the native status item for systems that expose it normally.
+
 ## 0.4.18
 
 - Keep the Gravtail product mark in the menu bar and add a compact graphite
