@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.14
+
+- Added a compact `G` fallback label next to the native menu-bar cursor symbol.
+  The status item stays clickable and visible even if a specific macOS build
+  fails to rasterize the SF Symbol.
+
 ## 0.4.13
 
 - Use the native macOS `cursorarrow.rays` menu-bar symbol (with a cursor
