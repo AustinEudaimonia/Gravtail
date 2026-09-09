@@ -40,6 +40,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var isShowingOnboarding = false
     private var terminatingOldInstancePIDs = Set<pid_t>()
     private var lastDiagnosticState = ""
+    private var lastAccessibilityTrustState: Bool?
+    private var permissionCompletionWorkItem: DispatchWorkItem?
 
     override init() {
         sessionInputBaselineUptime = launchUptime
@@ -77,6 +79,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         pointerController.gainProvider = { [weak self] in
             self?.isUIPreview == true ? 1 : (self?.clock.pointerGain ?? 1)
         }
+        lastAccessibilityTrustState = pointerController.isTrusted
         hidAccelerationController.backupPreparedHandler = { [weak self] mouse, trackpad in
             self?.startHIDRecoveryWatchdog(mouse: mouse, trackpad: trackpad) ?? false
         }
@@ -268,6 +271,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func logicTick() {
+        observeAccessibilityPermission()
         if hidAccelerationController.isActive && !hidRecoveryWatchdog.pulse() {
             // A stalled loop, dead child or broken IPC ends physical weighting
             // until the user explicitly resets. Never spawn a replacement that
@@ -532,6 +536,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.delegate = self
         item.menu = menu
         statusItem = item
+    }
+
+    private func observeAccessibilityPermission() {
+        let trusted = pointerController.isTrusted
+        defer { lastAccessibilityTrustState = trusted }
+        guard lastAccessibilityTrustState == false, trusted,
+              physicalWeightingEnabled, settingsWindow?.isVisible == true else { return }
+
+        settings.set(true, forKey: "hasCompletedOnboarding")
+        DiagnosticLog.shared.record("accessibility-granted")
+        settingsSummary?.stringValue = "授权完成 · Gravtail 已准备好"
+        settingsPrimaryButton?.title = "开始使用"
+
+        // Keep the completion state visible briefly, then return the user to
+        // the app they were configuring. The next real input starts timing;
+        // clicking this window or System Settings never consumes work time.
+        permissionCompletionWorkItem?.cancel()
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self, self.pointerController.isTrusted else { return }
+            self.sessionInputBaselineUptime = ProcessInfo.processInfo.systemUptime
+            self.settingsWindow?.orderOut(nil)
+        }
+        permissionCompletionWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.9, execute: workItem)
     }
 
     func menuNeedsUpdate(_ menu: NSMenu) {

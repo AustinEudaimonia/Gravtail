@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.12
+
+- Detect the Accessibility permission transition while Gravtail is open.
+- Show a short “授权完成” state, save onboarding completion, and automatically
+  close the setup window after permission is granted.
+- Keep the next real keyboard/mouse input as the start of the work session.
+- Make the menu-bar slot and icon sizing explicit for crowded MacBook bars.
+
 ## 0.4.11
 
 - Added an explicit Settings primary action: request Accessibility permission
