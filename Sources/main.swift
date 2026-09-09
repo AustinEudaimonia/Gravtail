@@ -16,7 +16,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let pointerController = PointerWeightController()
     private let hidAccelerationController = HIDAccelerationController()
     private let breakReminder = BreakReminderPanel()
-    private var hidRecoveryWatchdog: Process?
+    private let hidRecoveryWatchdog = RecoveryWatchdog()
+    private var sessionSafetyDisabled = false
+    private var pendingRecoveryNotice = false
+    private var settingsWindow: NSWindow?
+    private var settingsSummary: NSTextField?
+    private var settingsPrimaryButton: NSButton?
+
+    private var physicalWeightingEnabled: Bool {
+        get { settings.bool(forKey: "physicalWeightingEnabled") }
+        set { settings.set(newValue, forKey: "physicalWeightingEnabled") }
+    }
 
     private var statusItem: NSStatusItem?
     private var overlayWindows: [NSWindow] = []
@@ -82,6 +92,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         startTimers()
         if !isAnyPreview {
             showOnboardingIfNeeded()
+            if settings.object(forKey: "physicalWeightingEnabled") == nil {
+                // Older versions did not persist the user's choice. Do not
+                // infer consent from an existing Accessibility grant.
+                physicalWeightingEnabled = false
+            }
+            // A visible entry point even when macOS has no room for our item.
+            showSettingsWindow()
         }
         if !isUIPreview {
             startPointerWeightIfPossible()
@@ -128,56 +145,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
-    private func restoreHardware() {
+    @discardableResult
+    private func restoreHardware() -> Bool {
         pointerController.stop()
+        pointerTapIsActive = false
         if hidAccelerationController.restore() {
-            stopHIDRecoveryWatchdog()
+            return stopHIDRecoveryWatchdog()
         } else {
             DiagnosticLog.shared.record("hid-restore-deferred-to-watchdog")
+            return false
         }
     }
 
     /// Start an independent copy of the executable before the first HID write.
-    /// If this app crashes or is force-killed, the child notices that the
-    /// parent PID disappeared and restores the exact pre-weight values.
+    /// Missing main-loop heartbeats, parent death or disconnected IPC trigger
+    /// restoration of the exact pre-weight values in the independent child.
     private func startHIDRecoveryWatchdog(mouse: Double?, trackpad: Double?) -> Bool {
-        if let hidRecoveryWatchdog, hidRecoveryWatchdog.isRunning {
-            return true
-        }
+        if hidRecoveryWatchdog.isRunning { return hidRecoveryWatchdog.pulse() }
         guard mouse != nil || trackpad != nil,
               let executableURL = Bundle.main.executableURL else { return false }
 
-        let process = Process()
-        process.executableURL = executableURL
-        process.arguments = [
+        let arguments = [
             "--hid-watchdog",
             String(ProcessInfo.processInfo.processIdentifier),
             mouse.map { String(format: "%.17g", $0) } ?? "none",
             trackpad.map { String(format: "%.17g", $0) } ?? "none",
         ]
-        process.standardOutput = FileHandle.nullDevice
-        process.standardError = FileHandle.nullDevice
-        do {
-            try process.run()
-            hidRecoveryWatchdog = process
-            DiagnosticLog.shared.record("hid-watchdog-started", fields: [
-                "pid": String(process.processIdentifier),
-            ])
-            return true
-        } catch {
-            DiagnosticLog.shared.record("hid-watchdog-failed", fields: [
-                "error": String(describing: error),
-            ])
-            return false
-        }
+        return hidRecoveryWatchdog.start(executable: executableURL, arguments: arguments)
     }
 
-    private func stopHIDRecoveryWatchdog() {
-        guard let process = hidRecoveryWatchdog else { return }
-        if process.isRunning {
-            process.terminate()
-        }
-        hidRecoveryWatchdog = nil
+    @discardableResult
+    private func stopHIDRecoveryWatchdog() -> Bool {
+        let stopped = hidRecoveryWatchdog.stop()
+        if !stopped { sessionSafetyDisabled = true }
+        return stopped
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
@@ -239,11 +240,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         let permission = NSAlert()
         permission.messageText = "允许 Gravtail 调整鼠标重量"
-        permission.informativeText = "需要 macOS 辅助功能权限才能让鼠标实际变慢；没有权限时彗尾效果仍然可用。"
+        permission.informativeText = "开启后允许 Gravtail 降低鼠标响应，并申请辅助功能权限。选择暂不开启时，所有阶段都只显示彗尾和休息提醒。"
         permission.addButton(withTitle: "开启")
         permission.addButton(withTitle: "暂不开启")
         if permission.runModal() == .alertFirstButtonReturn {
+            physicalWeightingEnabled = true
             pointerController.requestPermission()
+        } else {
+            physicalWeightingEnabled = false
         }
     }
 
@@ -264,6 +268,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func logicTick() {
+        if hidAccelerationController.isActive && !hidRecoveryWatchdog.pulse() {
+            // A stalled loop, dead child or broken IPC ends physical weighting
+            // until the user explicitly resets. Never spawn a replacement that
+            // would silently undo the watchdog's recovery.
+            sessionSafetyDisabled = true
+            _ = restoreHardware()
+        }
         // Preview sessions are intentionally frozen at the requested demo
         // state. Otherwise a user who has been away from the keyboard for
         // longer than the configured break duration can launch --preview-45
@@ -291,12 +302,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
         }
 
-        let wasAway = clock.isAway
         let recovered = clock.tick(
             now: now,
             idleTime: idleTime
         )
-        let returnedFromBreak = wasAway && !clock.isAway
         if recovered {
             pointerController.resetSafetyLockout()
             hidAccelerationController.resetSafetyLockout()
@@ -304,9 +313,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             needsFinalClear = true
             hasShownBreakReminder = false
             lastProgressReminderMark = 0
-        }
-        if returnedFromBreak {
-            breakReminder.showRecovered()
+            pendingRecoveryNotice = true
+            breakReminder.hide()
         }
         let progressMark = ReminderSchedule.progressMark(
             elapsed: clock.elapsed,
@@ -332,7 +340,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             isUIPreview: isUIPreview,
             isOnBreak: clock.isOnBreak,
             isAccessibilityTrusted: pointerController.isTrusted,
-            weight: clock.weight
+            weight: clock.weight,
+            isPhysicalWeightingEnabled: physicalWeightingEnabled && !sessionSafetyDisabled
         )
 
         // The ordering here is a safety invariant: restore the outgoing
@@ -341,14 +350,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         switch weightingMode {
         case .software:
             let restored = hidAccelerationController.restore()
-            if restored {
-                stopHIDRecoveryWatchdog()
-            }
-            if restored,
+            let watchdogStopped = restored && stopHIDRecoveryWatchdog()
+            if restored, watchdogStopped, !sessionSafetyDisabled,
                !pointerController.isSafetyDisabled,
                !pointerTapIsActive {
                 pointerTapIsActive = pointerController.start()
-            } else if !restored || pointerController.isSafetyDisabled {
+            } else if !restored || !watchdogStopped || sessionSafetyDisabled || pointerController.isSafetyDisabled {
                 if pointerTapIsActive {
                     pointerController.stop()
                 }
@@ -359,17 +366,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 pointerController.stop()
             }
             pointerTapIsActive = false
-            if hidAccelerationController.isActive,
-               hidRecoveryWatchdog?.isRunning != true {
-                let originals = hidAccelerationController.recoveryValues
-                if !startHIDRecoveryWatchdog(
-                    mouse: originals.mouse,
-                    trackpad: originals.trackpad
-                ) {
-                    _ = hidAccelerationController.restore()
-                    hidAccelerationController.disableForSafety()
-                }
-            }
             if hidAccelerationController.isSafetyDisabled {
                 if hidAccelerationController.restore() {
                     stopHIDRecoveryWatchdog()
@@ -387,6 +383,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
         }
 
+        if RecoveryNoticePolicy.shouldShow(pending: pendingRecoveryNotice,
+            hardwareRestored: hidAccelerationController.lastRollbackSucceeded,
+            hardwareActive: hidAccelerationController.isActive,
+            softwareActive: pointerTapIsActive, watchdogRunning: hidRecoveryWatchdog.isRunning) {
+            pendingRecoveryNotice = false
+            breakReminder.showRecovered()
+        }
+        settingsSummary?.stringValue = statusText
+        settingsPrimaryButton?.title = settingsPrimaryTitle
         recordDiagnosticState()
     }
 
@@ -505,13 +510,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // A genuine status item reserves its own menu-bar slot. The previous
         // floating panel could overlap the clock or another app because macOS
         // did not know it occupied menu-bar space.
-        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        // Use a fixed, slightly wider slot instead of squareLength. On some
+        // macOS menu-bar layouts a square item with a custom raster image is
+        // compressed to zero width when the bar recalculates its contents.
+        let item = NSStatusBar.system.statusItem(withLength: 26)
         item.isVisible = true
         if let button = item.button {
-            button.image = HeavyCursorIconRenderer.makeImage(
-                size: NSSize(width: 18, height: 18)
-            )
+            let image = HeavyCursorIconRenderer.makeImage(size: NSSize(width: 20, height: 20))
+            image.isTemplate = false
+            image.size = NSSize(width: 20, height: 20)
+            button.image = image
+            button.imageScaling = .scaleProportionallyDown
             button.imagePosition = .imageOnly
+            button.frame = NSRect(x: 0, y: 0, width: 26, height: 22)
+            button.wantsLayer = true
             button.toolTip = "Gravtail · 点击打开设置"
             button.setAccessibilityLabel("打开 Gravtail 设置")
             button.setAccessibilityHelp("打开 Gravtail 工作、休息和退出选项")
@@ -591,15 +603,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         breakItem.submenu = breakMenu
         menu.addItem(breakItem)
 
+        let settingsItem = NSMenuItem(title: "设置…", action: #selector(showSettingsWindow), keyEquivalent: ",")
+        settingsItem.target = self
+        menu.addItem(settingsItem)
+        let toggle = NSMenuItem(title: physicalWeightingEnabled ? "关闭鼠标加重" : "开启鼠标加重…",
+                                action: #selector(toggleWeighting), keyEquivalent: "")
+        toggle.target = self
+        menu.addItem(toggle)
+
         menu.addItem(.separator())
         let reset = NSMenuItem(title: "重置本轮", action: #selector(resetSession), keyEquivalent: "")
         reset.target = self
         menu.addItem(reset)
 
-        if !pointerController.isTrusted {
+        if physicalWeightingEnabled && !pointerController.isTrusted {
             menu.addItem(.separator())
             let permission = NSMenuItem(
-                title: "开启鼠标加重…",
+                title: "授予辅助功能权限…",
                 action: #selector(enablePermission),
                 keyEquivalent: ""
             )
@@ -617,9 +637,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if isUIPreview {
             return "仅预览界面 · 鼠标加重未开启"
         }
+        if !hidAccelerationController.lastRollbackSucceeded {
+            return "正在尝试恢复鼠标 · 请勿重新开启加重"
+        }
+        if sessionSafetyDisabled { return "检测到运行异常 · 加重已停用，可重置后重试" }
+        if !physicalWeightingEnabled {
+            if clock.isAway { return "休息完成 · 鼠标加重未开启" }
+            return "仅彗尾和提醒 · 鼠标加重未开启"
+        }
         if !pointerController.isTrusted {
             if !hasStartedWorkSession {
-                return "等待首次操作 · 强加重未开启"
+                return "需要辅助功能权限 · 点击“去授权鼠标加重”"
             }
             if clock.isOnBreak {
                 let now = ProcessInfo.processInfo.systemUptime
@@ -635,9 +663,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let effect = hidAccelerationController.isActive ? "硬件加重" : "彗尾已开启"
             return "距离起身还有 \(minutes) 分钟 · \(effect) · 强加重未开启"
         }
-        if !hidAccelerationController.lastOperationSucceeded,
-           !hidAccelerationController.lastRollbackSucceeded {
-            return "鼠标恢复失败 · 请重新启动 Gravtail"
+        if !hasStartedWorkSession {
+            return "已准备好 · 第一次键鼠输入后开始计时"
         }
         if isFortyFiveMinutePreview {
             if clock.isAway {
@@ -700,7 +727,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Resetting from the menu can happen while the event tap is active.
         // Restore synchronously so the next pointer event is never processed
         // by a stale weighting transform.
-        restoreHardware()
+        let restored = restoreHardware()
+        sessionSafetyDisabled = !restored
         pointerController.resetSafetyLockout()
         hidAccelerationController.resetSafetyLockout()
         hasStartedWorkSession = false
@@ -709,15 +737,121 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         CometModel.shared.clear()
         needsFinalClear = true
         hasShownBreakReminder = false
+        pendingRecoveryNotice = false
         lastProgressReminderMark = 0
         breakReminder.hide()
     }
 
     @objc private func enablePermission() {
+        physicalWeightingEnabled = true
         DiagnosticLog.shared.record("permission-request", fields: [
             "accessibility": pointerController.isTrusted ? "trusted" : "not-trusted",
         ])
         pointerController.requestPermission()
+    }
+
+    private var settingsPrimaryTitle: String {
+        if !physicalWeightingEnabled { return "开启鼠标加重…" }
+        return pointerController.isTrusted ? "开始使用" : "去授权鼠标加重…"
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        showSettingsWindow()
+        return false
+    }
+
+    @objc private func toggleWeighting() {
+        if physicalWeightingEnabled {
+            physicalWeightingEnabled = false
+            restoreHardware()
+        } else {
+            enablePermission()
+        }
+        if settingsWindow?.isVisible == true { showSettingsWindow() }
+    }
+
+    @objc private func settingsPrimaryAction() {
+        if !physicalWeightingEnabled {
+            physicalWeightingEnabled = true
+        }
+        guard pointerController.isTrusted else {
+            enablePermission()
+            settingsSummary?.stringValue = "请在系统设置中打开 Gravtail 的辅助功能权限，然后回到这里点击“开始使用”。"
+            settingsPrimaryButton?.title = settingsPrimaryTitle
+            return
+        }
+
+        // The session still begins on the next real keyboard/mouse input. This
+        // keeps opening or clicking Settings from consuming work time.
+        settings.set(true, forKey: "hasCompletedOnboarding")
+        sessionInputBaselineUptime = ProcessInfo.processInfo.systemUptime
+        settingsWindow?.orderOut(nil)
+    }
+
+    @objc private func changeWorkSetting(_ sender: NSPopUpButton) {
+        selectedInterval = TimeInterval([45, 60, 90][sender.indexOfSelectedItem] * 60)
+        clock.interval = selectedInterval
+        resetSession()
+    }
+
+    @objc private func changeBreakSetting(_ sender: NSPopUpButton) {
+        selectedBreakDuration = TimeInterval([3, 5, 10][sender.indexOfSelectedItem] * 60)
+        clock.breakDuration = selectedBreakDuration
+        resetSession()
+    }
+
+    @objc private func showSettingsWindow() {
+        let window = settingsWindow ?? NSWindow(contentRect: NSRect(x: 0, y: 0, width: 420, height: 310),
+            styleMask: [.titled, .closable, .miniaturizable], backing: .buffered, defer: false)
+        if settingsWindow == nil { window.center() }
+        window.title = "Gravtail 设置"
+        window.isReleasedWhenClosed = false
+        let content = NSView(frame: NSRect(x: 0, y: 0, width: 420, height: 310))
+        let summary = NSTextField(wrappingLabelWithString: statusText)
+        summary.frame = NSRect(x: 24, y: 246, width: 372, height: 44)
+        content.addSubview(summary)
+        settingsSummary = summary
+        for (row, title, values, selected, action) in [
+            (0, "工作时长", [45, 60, 90], Int(selectedInterval / 60), #selector(changeWorkSetting(_:))),
+            (1, "休息时长", [3, 5, 10], Int(selectedBreakDuration / 60), #selector(changeBreakSetting(_:)))
+        ] {
+            let y = CGFloat(205 - row * 36)
+            let label = NSTextField(labelWithString: title)
+            label.frame = NSRect(x: 24, y: y, width: 100, height: 24)
+            content.addSubview(label)
+            let popup = NSPopUpButton(frame: NSRect(x: 166, y: y, width: 170, height: 26))
+            popup.addItems(withTitles: values.map { "\($0) 分钟" })
+            popup.selectItem(at: values.firstIndex(of: selected) ?? 0)
+            popup.target = self
+            popup.action = action
+            content.addSubview(popup)
+        }
+        let toggle = NSButton(checkboxWithTitle: "启用鼠标加重（关闭后保留彗尾和提醒）",
+                              target: self, action: #selector(toggleWeighting))
+        toggle.state = physicalWeightingEnabled ? .on : .off
+        toggle.frame = NSRect(x: 24, y: 131, width: 372, height: 24)
+        content.addSubview(toggle)
+
+        let primary = NSButton(title: settingsPrimaryTitle, target: self, action: #selector(settingsPrimaryAction))
+        primary.frame = NSRect(x: 110, y: 76, width: 200, height: 34)
+        primary.bezelStyle = .rounded
+        primary.keyEquivalent = "\r"
+        content.addSubview(primary)
+        settingsPrimaryButton = primary
+
+        for (x, title, action) in [
+            (24, "重置本轮", #selector(resetSession)),
+            (271, "退出 Gravtail", #selector(quitApplication))
+        ] {
+            let button = NSButton(title: title, target: self, action: action)
+            button.frame = NSRect(x: x, y: 22, width: 125, height: 32)
+            button.bezelStyle = .rounded
+            content.addSubview(button)
+        }
+        window.contentView = content
+        settingsWindow = window
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
     }
 
     @objc private func quitApplication() {
@@ -730,7 +864,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             isUIPreview: isUIPreview,
             isOnBreak: clock.isOnBreak,
             isAccessibilityTrusted: pointerController.isTrusted,
-            weight: clock.weight
+            weight: clock.weight,
+            isPhysicalWeightingEnabled: physicalWeightingEnabled && !sessionSafetyDisabled
         )
         guard mode == .software else {
             pointerTapIsActive = false
@@ -793,25 +928,17 @@ if let watchdogIndex = ProcessInfo.processInfo.arguments.firstIndex(of: "--hid-w
     let mouse = Double(arguments[watchdogIndex + 2])
     let trackpad = Double(arguments[watchdogIndex + 3])
 
-    // Remain independent of AppKit. SIGKILL and crashes bypass
-    // applicationWillTerminate, so watch the parent from a separate process.
-    while true {
-        errno = 0
-        if kill(parentPID, 0) == 0 || errno == EPERM {
-            usleep(200_000)
-            continue
-        }
-        break
-    }
-
     let controller = HIDAccelerationController(restoreOrphanedBackup: false)
-    let restored = controller.restoreKnownValues(mouse: mouse, trackpad: trackpad)
-    _ = CGAssociateMouseAndMouseCursorPosition(1)
+    let result = RecoveryWatchdog.run(parentPID: parentPID) {
+        let restored = controller.restoreKnownValues(mouse: mouse, trackpad: trackpad)
+        _ = CGAssociateMouseAndMouseCursorPosition(1)
+        return restored
+    }
     DiagnosticLog.shared.record(
-        restored ? "hid-watchdog-restored" : "hid-watchdog-restore-failed",
+        result == 0 ? "hid-watchdog-stopped" : (result == 70 ? "hid-watchdog-restored" : "hid-watchdog-restore-failed"),
         fields: ["parentPID": String(parentPID)]
     )
-    exit(restored ? 0 : 1)
+    exit(result)
 } else if ProcessInfo.processInfo.arguments.contains("--check-accessibility") {
     print(AXIsProcessTrusted() ? "trusted" : "not-trusted")
 } else if ProcessInfo.processInfo.arguments.contains("--check-hid") {

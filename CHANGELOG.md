@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.4.11
+
+- Added an explicit Settings primary action: request Accessibility permission
+  first, then start the session after the next real input.
+- Moved rollback App backups out of `/Applications` so macOS does not list an
+  older copy as a second Accessibility target.
+- Reserved a fixed 26-point menu-bar slot and explicitly configured image
+  scaling so the Gravtail icon remains visible on crowded and notch layouts.
+
+## 0.4.10
+
+- Added a ready-handshaked independent HID recovery process driven by main-loop
+  heartbeats. Lost heartbeats, disconnected IPC and parent death trigger bounded
+  restore retries; the resumed app locks weighting off until an explicit reset.
+- Wait for the outgoing watchdog to exit before switching weighting paths.
+- Show the recovery notice as soon as restoration succeeds, without requiring
+  new input. Remove the delayed hide callback that could hide its replacement.
+- Persist the physical-weighting choice independently of Accessibility grants;
+  opting out disables both software and hardware paths. Older versions without
+  a saved choice start with weighting off and expose the choice in Settings.
+- Open a real settings window on launch/reopen with work/rest durations,
+  weighting opt-in/out, reset and quit, even if the menu bar is crowded.
+- Pin community updates to the installed app's exact leaf certificate. Missing
+  original identities and ambiguous first-install certificates stop installation
+  without replacing the app or generating another identity.
+- Add fake-restoration subprocess tests for hangs, abrupt death, failed startup,
+  normal shutdown and bounded retries, plus consent, recovery and signing tests.
+
 ## 0.4.9
 
 - Replaced hard-linked private HID symbols with runtime capability detection,

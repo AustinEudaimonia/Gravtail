@@ -127,12 +127,10 @@ final class BreakReminderPanel: NSObject {
         isVisible = false
         panel.ignoresMouseEvents = true
 
-        NSAnimationContext.runAnimationGroup({ context in
-            context.duration = 0.18
-            panel.animator().alphaValue = 0
-        }, completionHandler: { [weak panel] in
-            panel?.orderOut(nil)
-        })
+        // Hide synchronously: a delayed fade-out completion could otherwise
+        // order out the recovery notice that replaces this pill in the same tick.
+        panel.orderOut(nil)
+        panel.alphaValue = 0
     }
 
     func screenConfigurationChanged() {

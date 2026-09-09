@@ -14,6 +14,13 @@ swiftc \
 
 "$TEST_BINARY"
 
+swiftc -swift-version 5 -warnings-as-errors \
+  "$PROJECT_DIR/Sources/RecoveryWatchdog.swift" \
+  "$PROJECT_DIR/Tests/RecoveryWatchdogTests.swift" \
+  -o "$TEST_DIR/RecoveryWatchdogTests"
+"$TEST_DIR/RecoveryWatchdogTests"
+/bin/zsh "$PROJECT_DIR/Tests/SigningIdentityTests.sh"
+
 for arch in arm64 x86_64; do
   swiftc \
     -warnings-as-errors \
@@ -29,7 +36,10 @@ zsh -n \
   "$PROJECT_DIR/package.sh" \
   "$PROJECT_DIR/scripts/ensure-local-signing-identity.sh" \
   "$PROJECT_DIR/scripts/import-signing-identity.sh" \
-  "$PROJECT_DIR/scripts/install-community-build.sh"
+  "$PROJECT_DIR/scripts/install-community-build.sh" \
+  "$PROJECT_DIR/scripts/select-signing-identity.sh" \
+  "$PROJECT_DIR/Tests/SigningIdentityTests.sh" \
+  "$PROJECT_DIR/Tests/InstallerIntegrationTests.sh"
 
 if grep -R -q '@_silgen_name' "$PROJECT_DIR/Sources"; then
   print -u2 "FAIL: private HID symbols must be loaded dynamically"

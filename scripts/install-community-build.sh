@@ -15,6 +15,7 @@ fail() {
 
 [[ -d "${SOURCE_APP}" ]] || fail "安装包中缺少 Gravtail.app。请完整解压 ZIP 后再运行。"
 [[ -x "${SUPPORT_DIR}/ensure-local-signing-identity.sh" ]] || fail "安装包中的签名工具不完整。"
+[[ -f "${SUPPORT_DIR}/select-signing-identity.sh" ]] || fail "安装包中的证书选择工具不完整。"
 [[ -f "${SUPPORT_DIR}/HeavyCursor.entitlements" ]] || fail "安装包中缺少签名权限文件。"
 
 actual_bundle_id="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "${SOURCE_APP}/Contents/Info.plist" 2>/dev/null || true)"
@@ -32,6 +33,7 @@ fi
 
 TARGET_APP="${INSTALL_ROOT}/Gravtail.app"
 TARGET_EXECUTABLE="${TARGET_APP}/Contents/MacOS/HeavyCursor"
+BACKUP_ROOT="${GRAVTAIL_BACKUP_DIR:-${HOME}/Library/Application Support/Gravtail/Backups}"
 gravtail_is_running=0
 while IFS= read -r running_command; do
   case "${running_command}" in
@@ -46,12 +48,23 @@ if [[ "${gravtail_is_running}" == "1" ]]; then
 fi
 
 print "1/4  准备这台 Mac 的 Gravtail 本地签名…"
-"${SUPPORT_DIR}/ensure-local-signing-identity.sh" "${IDENTITY_NAME}"
-IDENTITY_HASH="$(security find-identity -p codesigning -v 2>/dev/null | awk -v name="\"${IDENTITY_NAME}\"" 'index($0, name) { print $2; exit }')"
-[[ "${IDENTITY_HASH}" =~ '^[0-9A-Fa-f]{40}$' ]] || fail "无法定位 '${IDENTITY_NAME}' 的证书指纹。"
-
 stage_dir="$(mktemp -d "${INSTALL_ROOT}/.gravtail-install.XXXXXX")"
 trap 'rm -rf "${stage_dir}"' EXIT
+expected_identity=""
+if [[ -e "${TARGET_APP}" ]]; then
+  installed_id="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "${TARGET_APP}/Contents/Info.plist" 2>/dev/null || true)"
+  [[ "${installed_id}" == "${EXPECTED_BUNDLE_ID}" ]] || fail "目标位置已有其他应用，拒绝覆盖。"
+  codesign --verify --deep --strict "${TARGET_APP}" || fail "现有应用签名无效，拒绝自动替换签名身份。"
+  codesign -d --extract-certificates="${stage_dir}/installed-cert-" "${TARGET_APP}" 2>/dev/null || fail "无法读取现有应用证书。"
+  [[ -f "${stage_dir}/installed-cert-0" ]] || fail "现有应用没有固定证书；请先备份并移走旧应用，再明确执行首次安装。"
+  expected_identity="$(openssl x509 -inform DER -in "${stage_dir}/installed-cert-0" -noout -fingerprint -sha1 | sed 's/.*=//; s/://g')"
+  [[ "${expected_identity}" =~ '^[0-9A-Fa-f]{40}$' ]] || fail "无法解析现有签名证书。"
+else
+  "${SUPPORT_DIR}/ensure-local-signing-identity.sh" "${IDENTITY_NAME}"
+fi
+IDENTITY_HASH="$(security find-identity -p codesigning -v | /bin/zsh "${SUPPORT_DIR}/select-signing-identity.sh" "${IDENTITY_NAME}" "${expected_identity}")" || fail "签名身份不可用，原应用未修改。"
+[[ "${IDENTITY_HASH}" =~ '^[0-9A-Fa-f]{40}$' ]] || fail "无法定位证书指纹。"
+
 staged_app="${stage_dir}/Gravtail.app"
 backup_app=""
 
@@ -75,9 +88,7 @@ codesign --verify --deep --strict \
   -R="certificate leaf = H\"${IDENTITY_HASH}\"" \
   "${staged_app}" >/dev/null
 
-signature_info="$(codesign -d -vv "${staged_app}" 2>&1)"
-signer="$(print -r -- "${signature_info}" | awk -F= '/^Authority=/ && !found { print $2; found=1 }')"
-[[ "${signer}" == "${IDENTITY_NAME}" ]] || fail "本地重签名校验失败。"
+# Exact leaf verification above is authoritative, including legacy display names.
 
 # The user has already explicitly opened this verified installer. Remove only
 # the downloaded App's quarantine marker after its incoming signature, bundle
@@ -87,7 +98,8 @@ xattr -dr com.apple.quarantine "${staged_app}" 2>/dev/null || true
 
 print "3/4  固定安装到：${TARGET_APP}"
 if [[ -e "${TARGET_APP}" ]]; then
-  backup_app="${INSTALL_ROOT}/Gravtail.previous-$(date +%Y%m%d-%H%M%S)-$$.app"
+  mkdir -p "${BACKUP_ROOT}"
+  backup_app="${BACKUP_ROOT}/Gravtail.previous-$(date +%Y%m%d-%H%M%S)-$$.app"
   mv "${TARGET_APP}" "${backup_app}"
   print "旧版本已保留在：${backup_app}"
 fi
@@ -110,14 +122,14 @@ fi
 # Register the fixed install path before launch so Launch Services and TCC see
 # the locally signed copy, never the temporary copy inside the download ZIP.
 LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
-if [[ -x "${LSREGISTER}" ]]; then
+if [[ "${GRAVTAIL_SKIP_REGISTRATION:-0}" != "1" && -x "${LSREGISTER}" ]]; then
   "${LSREGISTER}" -f "${TARGET_APP}" >/dev/null 2>&1 || true
 fi
 
 # Keep one recoverable previous version and discard older installer backups.
 # Without this, every update silently leaves another full .app in Applications.
 setopt local_options null_glob
-previous_apps=("${INSTALL_ROOT}"/Gravtail.previous-*.app(N))
+previous_apps=("${BACKUP_ROOT}"/Gravtail.previous-*.app(N))
 keep_backup="${backup_app}"
 if [[ -z "${keep_backup}" && ${#previous_apps[@]} -gt 0 ]]; then
   # Timestamp is part of the filename, so reverse name order is newest first.
