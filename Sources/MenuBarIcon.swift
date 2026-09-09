@@ -17,6 +17,37 @@ enum HeavyCursorIconRenderer {
         return image
     }
 
+    /// The product artwork is intentionally light, so a tiny graphite tile
+    /// keeps it legible on both light and dark macOS menu bars without
+    /// changing the mark itself.
+    static func makeMenuBarImage(size: NSSize) -> NSImage {
+        let image = NSImage(size: size)
+        image.lockFocus()
+
+        let backgroundRect = NSRect(
+            x: 1,
+            y: 1,
+            width: max(0, size.width - 2),
+            height: max(0, size.height - 2)
+        )
+        let background = NSBezierPath(
+            roundedRect: backgroundRect,
+            xRadius: size.width * 0.24,
+            yRadius: size.height * 0.24
+        )
+        NSColor.black.withAlphaComponent(0.82).setFill()
+        background.fill()
+        NSColor.white.withAlphaComponent(0.20).setStroke()
+        background.lineWidth = 0.7
+        background.stroke()
+
+        let artworkRect = backgroundRect.insetBy(dx: 3, dy: 3)
+        draw(in: artworkRect, weight: 0)
+        image.unlockFocus()
+        image.isTemplate = false
+        return image
+    }
+
     static func draw(in rect: NSRect, weight: CGFloat) {
         // Use the selected artwork directly so the menu-bar mark is a faithful
         // reproduction of the approved reference rather than a redraw.
