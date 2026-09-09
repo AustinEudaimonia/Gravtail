@@ -517,8 +517,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Use a fixed slot with a one-letter fallback label. If a macOS build
         // fails to rasterize an SF Symbol, the user still gets a visible and
         // clickable Gravtail entry instead of an empty reserved gap.
-        let item = NSStatusBar.system.statusItem(withLength: 38)
-        item.isVisible = true
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = item.button {
             // Prefer a native SF Symbol for the menu bar. Unlike a full-color
             // raster, it is guaranteed to adapt to light/dark menu bars and
@@ -535,6 +534,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             button.title = "G"
             button.font = NSFont.systemFont(ofSize: 11, weight: .semibold)
             button.imagePosition = .imageLeft
+            button.alignment = .center
+            button.isEnabled = true
             button.contentTintColor = .labelColor
             button.toolTip = "Gravtail · 点击打开设置"
             button.setAccessibilityLabel("打开 Gravtail 设置")
@@ -543,7 +544,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let menu = NSMenu()
         menu.delegate = self
         item.menu = menu
+        item.length = 38
+        item.isVisible = true
         statusItem = item
+        DiagnosticLog.shared.record("menu-bar-item-ready", fields: [
+            "visible": item.isVisible ? "true" : "false",
+            "length": String(format: "%.0f", item.length),
+            "button": item.button == nil ? "nil" : "present",
+            "buttonWindow": item.button?.window == nil ? "nil" : "present",
+        ])
     }
 
     private func observeAccessibilityPermission() {
