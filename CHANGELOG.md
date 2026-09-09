@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.13
+
+- Use the native macOS `cursorarrow.rays` menu-bar symbol (with a cursor
+  fallback) so the Gravtail entry remains visible across light/dark and notch
+  menu bars. The custom Gravtail artwork remains the Finder/App icon.
+
 ## 0.4.12
 
 - Detect the Accessibility permission transition while Gravtail is open.
