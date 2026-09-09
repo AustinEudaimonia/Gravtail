@@ -544,7 +544,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let menu = NSMenu()
         menu.delegate = self
         item.menu = menu
-        item.length = 38
+        // Keep the status item variable-length. A fixed width can clip the
+        // symbol and the fallback label on some macOS menu-bar layouts,
+        // leaving an apparently empty but clickable slot.
         item.isVisible = true
         statusItem = item
         DiagnosticLog.shared.record("menu-bar-item-ready", fields: [

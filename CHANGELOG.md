@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.16
+
+- Let macOS auto-size the menu-bar item instead of forcing a fixed width that
+  could clip the cursor symbol and fallback label.
+
 ## 0.4.15
 
 - Create the status item using the standard variable-length API, assign its
