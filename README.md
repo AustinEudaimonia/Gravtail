@@ -64,7 +64,7 @@ A deliberately small macOS menu bar app: the longer you use your Mac, the heavie
 - At the selected limit, the pill stays visible with a live break countdown and Quit action.
 - During that break countdown, the native pointer remains fully usable (including text I-beam hit testing) while the system acceleration stays reduced; keyboard or pointer input simply restarts the countdown.
 - Pills sit at the upper center of the main screen, below the menu bar and away from bottom-center voice tools such as Typeless.
-- A single small comet/cursor icon is pinned near the center of the top menu-bar strip (automatically avoiding a MacBook notch) and opens work and break settings, Reset Session, and Quit. It remains visible over full-screen apps and never relies on the system's hidden status-item overflow.
+- A single small Gravtail comet/cursor icon is pinned near the center of the top menu-bar strip (automatically avoiding a MacBook notch) and opens work and break settings, Reset Session, and Quit. It remains visible over full-screen apps; a native status item is also provided when macOS exposes third-party status items normally.
 - The first physical keyboard or pointer input starts a new work session; any keyboard or pointer input restarts the break countdown.
 - Completing the break restores the original pointer response and starts a new session.
 - Reset or quit at any time from the menu bar.

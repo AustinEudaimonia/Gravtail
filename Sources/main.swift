@@ -29,6 +29,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private var statusItem: NSStatusItem?
+    private var topProductIconPanel: NSPanel?
     private var overlayWindows: [NSWindow] = []
     private var renderTimer: Timer?
     private var logicTimer: Timer?
@@ -72,6 +73,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         terminateOtherInstances()
         NSApp.setActivationPolicy(isUIPreview ? .regular : .accessory)
         setUpMenuBarIcon()
+        setUpTopProductIconPanel()
         if !isUIPreview {
             rebuildOverlayWindows()
         }
@@ -472,6 +474,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func screensChanged() {
         rebuildOverlayWindows()
         breakReminder.screenConfigurationChanged()
+        positionTopProductIconPanel()
     }
 
     private func rebuildOverlayWindows() {
@@ -534,9 +537,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let menu = NSMenu()
         menu.delegate = self
         item.menu = menu
-        // Keep the status item variable-length. A fixed width can clip the
-        // symbol and the fallback label on some macOS menu-bar layouts,
-        // leaving an apparently empty but clickable slot.
+        // Reserve a concrete square slot for the artwork. Some macOS builds
+        // keep image-only variable-length items in the hidden status-menu
+        // group even though the button object reports as visible.
+        item.length = 28
         item.isVisible = true
         statusItem = item
         DiagnosticLog.shared.record("menu-bar-item-ready", fields: [
@@ -544,7 +548,66 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             "length": String(format: "%.0f", item.length),
             "button": item.button == nil ? "nil" : "present",
             "buttonWindow": item.button?.window == nil ? "nil" : "present",
+            "buttonFrame": item.button.map { NSStringFromRect($0.frame) } ?? "nil",
+            "windowFrame": item.button?.window.map { NSStringFromRect($0.frame) } ?? "nil",
         ])
+    }
+
+    /// Some macOS menu-bar configurations place third-party status items in
+    /// an inaccessible overflow group. Keep a tiny product-mark launcher in
+    /// the menu-bar strip itself so Gravtail remains discoverable and usable.
+    private func setUpTopProductIconPanel() {
+        guard !isUIPreview else { return }
+
+        let panel = NSPanel(
+            contentRect: NSRect(x: 0, y: 0, width: 28, height: 28),
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = false
+        panel.level = .statusBar
+        panel.hidesOnDeactivate = false
+        panel.becomesKeyOnlyIfNeeded = true
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
+        panel.isReleasedWhenClosed = false
+
+        let button = NSButton(frame: NSRect(x: 2, y: 2, width: 24, height: 24))
+        button.isBordered = false
+        button.focusRingType = .none
+        button.image = HeavyCursorIconRenderer.makeMenuBarImage(size: NSSize(width: 22, height: 22))
+        button.imageScaling = .scaleProportionallyDown
+        button.imagePosition = .imageOnly
+        button.toolTip = "Gravtail · 点击打开设置"
+        button.setAccessibilityLabel("打开 Gravtail 设置")
+        button.target = self
+        button.action = #selector(topProductIconClicked)
+        panel.contentView = button
+
+        topProductIconPanel = panel
+        positionTopProductIconPanel()
+        panel.orderFrontRegardless()
+        DiagnosticLog.shared.record("top-product-icon-ready", fields: [
+            "frame": NSStringFromRect(panel.frame),
+            "level": String(panel.level.rawValue),
+        ])
+    }
+
+    private func positionTopProductIconPanel() {
+        guard let panel = topProductIconPanel,
+              let screen = NSScreen.main ?? NSScreen.screens.first else { return }
+
+        let menuBarHeight = max(22, screen.frame.maxY - screen.visibleFrame.maxY)
+        let panelSize = panel.frame.size
+        let x = screen.frame.midX - panelSize.width / 2
+        let y = screen.frame.maxY - menuBarHeight + (menuBarHeight - panelSize.height) / 2
+        panel.setFrameOrigin(NSPoint(x: x, y: y))
+    }
+
+    @objc private func topProductIconClicked() {
+        showSettingsWindow()
     }
 
     private func observeAccessibilityPermission() {
