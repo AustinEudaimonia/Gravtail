@@ -514,29 +514,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // A genuine status item reserves its own menu-bar slot. The previous
         // floating panel could overlap the clock or another app because macOS
         // did not know it occupied menu-bar space.
-        // Use a fixed slot with a one-letter fallback label. If a macOS build
-        // fails to rasterize an SF Symbol, the user still gets a visible and
-        // clickable Gravtail entry instead of an empty reserved gap.
+        // Use the approved Gravtail artwork itself as the status-bar mark.
+        // Keeping the product mark here makes the menu-bar entry recognizable
+        // even when the app is running without a Dock icon or settings window.
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = item.button {
-            // Prefer a native SF Symbol for the menu bar. Unlike a full-color
-            // raster, it is guaranteed to adapt to light/dark menu bars and
-            // notch layouts; the custom Gravtail artwork remains the app icon.
-            let image = NSImage(systemSymbolName: "cursorarrow.rays",
-                                accessibilityDescription: "Gravtail")
-                ?? NSImage(systemSymbolName: "cursorarrow",
-                           accessibilityDescription: "Gravtail")
-                ?? HeavyCursorIconRenderer.makeImage(size: NSSize(width: 20, height: 20))
-            image.isTemplate = true
-            image.size = NSSize(width: 18, height: 18)
+            let image = HeavyCursorIconRenderer.makeImage(size: NSSize(width: 18, height: 18))
+            image.isTemplate = false
             button.image = image
             button.imageScaling = .scaleProportionallyDown
-            button.title = "G"
-            button.font = NSFont.systemFont(ofSize: 11, weight: .semibold)
-            button.imagePosition = .imageLeft
+            button.title = ""
+            button.imagePosition = .imageOnly
             button.alignment = .center
             button.isEnabled = true
-            button.contentTintColor = .labelColor
             button.toolTip = "Gravtail · 点击打开设置"
             button.setAccessibilityLabel("打开 Gravtail 设置")
             button.setAccessibilityHelp("打开 Gravtail 工作、休息和退出选项")

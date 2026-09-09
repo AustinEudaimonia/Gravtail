@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.17
+
+- Replace the system cursor SF Symbol in the menu bar with the official
+  Gravtail comet-cursor product artwork.
+
 ## 0.4.16
 
 - Let macOS auto-size the menu-bar item instead of forcing a fixed width that
