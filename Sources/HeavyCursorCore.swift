@@ -40,9 +40,10 @@ enum CursorWeightingPolicy {
         isUIPreview: Bool,
         isOnBreak: Bool,
         isAccessibilityTrusted: Bool,
-        weight: CGFloat
+        weight: CGFloat,
+        isPhysicalWeightingEnabled: Bool
     ) -> CursorWeightingMode {
-        guard !isUIPreview,
+        guard isPhysicalWeightingEnabled, !isUIPreview,
               weight > HeavyCursorConstants.pointerTapActivationWeight else {
             return .none
         }
@@ -61,6 +62,13 @@ enum ReminderSchedule {
     static func progressMark(elapsed: TimeInterval, workInterval: TimeInterval) -> Int {
         guard elapsed > 0, elapsed < workInterval else { return 0 }
         return Int(elapsed / progressInterval)
+    }
+}
+
+enum RecoveryNoticePolicy {
+    static func shouldShow(pending: Bool, hardwareRestored: Bool, hardwareActive: Bool,
+                           softwareActive: Bool, watchdogRunning: Bool) -> Bool {
+        pending && hardwareRestored && !hardwareActive && !softwareActive && !watchdogRunning
     }
 }
 

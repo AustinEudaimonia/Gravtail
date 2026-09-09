@@ -23,10 +23,16 @@ ensure_code_signing_trust() {
 }
 
 if security find-identity -p codesigning -v 2>/dev/null | grep -Fq "\"${IDENTITY_NAME}\""; then
-  ensure_code_signing_trust
+  # Already a valid identity: do not look up/trust an arbitrary same-name cert.
+  security find-identity -p codesigning -v | /bin/zsh "${0:A:h}/select-signing-identity.sh" "${IDENTITY_NAME}" >/dev/null
   print "Using existing code-signing identity: ${IDENTITY_NAME}"
   print "Verified user-level code-signing trust for: ${IDENTITY_NAME}"
   exit 0
+fi
+
+if security find-certificate -c "${IDENTITY_NAME}" >/dev/null 2>&1; then
+  print -u2 "证书已存在，但有效签名身份不可用。请解锁钥匙串并检查原私钥和代码签名信任；不会生成另一张同名证书。"
+  exit 1
 fi
 
 if ! command -v openssl >/dev/null 2>&1; then

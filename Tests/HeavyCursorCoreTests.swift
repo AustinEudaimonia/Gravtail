@@ -43,12 +43,38 @@ enum HeavyCursorCoreTests {
         )
         expect(MaintenancePolicy.installerBackupsToKeep == 1, "installer keeps one rollback copy")
 
+        for restored in [false, true] {
+            for hardwareActive in [false, true] {
+                for softwareActive in [false, true] {
+                    for watchdogRunning in [false, true] {
+                        let ready = RecoveryNoticePolicy.shouldShow(pending: true,
+                            hardwareRestored: restored, hardwareActive: hardwareActive,
+                            softwareActive: softwareActive, watchdogRunning: watchdogRunning)
+                        expect(ready == (restored && !hardwareActive && !softwareActive && !watchdogRunning),
+                            "recovery notice waits for confirmed restoration and all outgoing paths to stop")
+                    }
+                }
+            }
+        }
+        expect(!RecoveryNoticePolicy.shouldShow(pending: false, hardwareRestored: true,
+            hardwareActive: false, softwareActive: false, watchdogRunning: false),
+            "completed recovery notice does not repeat")
+
+        for trusted in [false, true] {
+            for onBreak in [false, true] {
+                expect(CursorWeightingPolicy.mode(isUIPreview: false, isOnBreak: onBreak,
+                    isAccessibilityTrusted: trusted, weight: 1,
+                    isPhysicalWeightingEnabled: false) == .none,
+                    "opt-out disables ALL physical weighting even with permission")
+            }
+        }
+
         expect(
             CursorWeightingPolicy.mode(
                 isUIPreview: false,
                 isOnBreak: false,
                 isAccessibilityTrusted: true,
-                weight: 0.5
+                weight: 0.5, isPhysicalWeightingEnabled: true
             ) == .software,
             "active work uses only software weighting"
         )
@@ -57,7 +83,7 @@ enum HeavyCursorCoreTests {
                 isUIPreview: false,
                 isOnBreak: true,
                 isAccessibilityTrusted: true,
-                weight: 1
+                weight: 1, isPhysicalWeightingEnabled: true
             ) == .hardware,
             "break uses only native-cursor hardware weighting"
         )
@@ -66,7 +92,7 @@ enum HeavyCursorCoreTests {
                 isUIPreview: false,
                 isOnBreak: false,
                 isAccessibilityTrusted: false,
-                weight: 1
+                weight: 1, isPhysicalWeightingEnabled: true
             ) == .none,
             "untrusted active work fails open"
         )
@@ -75,7 +101,7 @@ enum HeavyCursorCoreTests {
                 isUIPreview: true,
                 isOnBreak: true,
                 isAccessibilityTrusted: true,
-                weight: 1
+                weight: 1, isPhysicalWeightingEnabled: true
             ) == .none,
             "UI preview never changes pointer behavior"
         )
