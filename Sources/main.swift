@@ -514,10 +514,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // A genuine status item reserves its own menu-bar slot. The previous
         // floating panel could overlap the clock or another app because macOS
         // did not know it occupied menu-bar space.
-        // Use a fixed, slightly wider slot instead of squareLength. On some
-        // macOS menu-bar layouts a square item with a custom raster image is
-        // compressed to zero width when the bar recalculates its contents.
-        let item = NSStatusBar.system.statusItem(withLength: 26)
+        // Use a fixed slot with a one-letter fallback label. If a macOS build
+        // fails to rasterize an SF Symbol, the user still gets a visible and
+        // clickable Gravtail entry instead of an empty reserved gap.
+        let item = NSStatusBar.system.statusItem(withLength: 38)
         item.isVisible = true
         if let button = item.button {
             // Prefer a native SF Symbol for the menu bar. Unlike a full-color
@@ -532,7 +532,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             image.size = NSSize(width: 18, height: 18)
             button.image = image
             button.imageScaling = .scaleProportionallyDown
-            button.imagePosition = .imageOnly
+            button.title = "G"
+            button.font = NSFont.systemFont(ofSize: 11, weight: .semibold)
+            button.imagePosition = .imageLeft
             button.contentTintColor = .labelColor
             button.toolTip = "Gravtail · 点击打开设置"
             button.setAccessibilityLabel("打开 Gravtail 设置")
