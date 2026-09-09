@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.18
+
+- Keep the Gravtail product mark in the menu bar and add a compact graphite
+  backing tile so the white cursor remains visible in either menu-bar theme.
+
 ## 0.4.17
 
 - Replace the system cursor SF Symbol in the menu bar with the official

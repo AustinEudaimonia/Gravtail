@@ -519,7 +519,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // even when the app is running without a Dock icon or settings window.
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = item.button {
-            let image = HeavyCursorIconRenderer.makeImage(size: NSSize(width: 18, height: 18))
+            let image = HeavyCursorIconRenderer.makeMenuBarImage(size: NSSize(width: 22, height: 22))
             image.isTemplate = false
             button.image = image
             button.imageScaling = .scaleProportionallyDown
