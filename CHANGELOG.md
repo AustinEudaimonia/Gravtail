@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.21
+
+- Simplify the menu-bar mark to the original transparent Gravtail comet-cursor
+  artwork without a surrounding square or badge.
+
 ## 0.4.20
 
 - Offset the visible top-bar product launcher on built-in MacBook displays so
