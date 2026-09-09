@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.15
+
+- Create the status item using the standard variable-length API, assign its
+  menu before making it visible, and record the actual button/window state for
+  diagnosis on Macs whose menu bar hides third-party items.
+
 ## 0.4.14
 
 - Added a compact `G` fallback label next to the native menu-bar cursor symbol.
