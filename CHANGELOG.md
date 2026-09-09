@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.20
+
+- Offset the visible top-bar product launcher on built-in MacBook displays so
+  it sits safely to the left of the camera notch instead of at the geometric
+  center underneath the housing.
+
 ## 0.4.19
 
 - Add a visible, clickable Gravtail product-mark launcher centered in the

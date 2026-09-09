@@ -601,7 +601,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         let menuBarHeight = max(22, screen.frame.maxY - screen.visibleFrame.maxY)
         let panelSize = panel.frame.size
-        let x = screen.frame.midX - panelSize.width / 2
+        // Built-in MacBook displays have a camera housing at the geometric
+        // center of the menu bar. Keep the mark just to its left; otherwise
+        // the panel can be hidden behind the black notch area.
+        let displayNumber = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber
+        let displayID = displayNumber.map { CGDirectDisplayID($0.uint32Value) }
+        let isBuiltInDisplay = displayID.map { CGDisplayIsBuiltin($0) != 0 } ?? false
+        let notchClearance: CGFloat = isBuiltInDisplay ? 96 : 0
+        let x = screen.frame.midX - panelSize.width / 2 - notchClearance
         let y = screen.frame.maxY - menuBarHeight + (menuBarHeight - panelSize.height) / 2
         panel.setFrameOrigin(NSPoint(x: x, y: y))
     }
