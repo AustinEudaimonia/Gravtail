@@ -520,14 +520,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let item = NSStatusBar.system.statusItem(withLength: 26)
         item.isVisible = true
         if let button = item.button {
-            let image = HeavyCursorIconRenderer.makeImage(size: NSSize(width: 20, height: 20))
-            image.isTemplate = false
-            image.size = NSSize(width: 20, height: 20)
+            // Prefer a native SF Symbol for the menu bar. Unlike a full-color
+            // raster, it is guaranteed to adapt to light/dark menu bars and
+            // notch layouts; the custom Gravtail artwork remains the app icon.
+            let image = NSImage(systemSymbolName: "cursorarrow.rays",
+                                accessibilityDescription: "Gravtail")
+                ?? NSImage(systemSymbolName: "cursorarrow",
+                           accessibilityDescription: "Gravtail")
+                ?? HeavyCursorIconRenderer.makeImage(size: NSSize(width: 20, height: 20))
+            image.isTemplate = true
+            image.size = NSSize(width: 18, height: 18)
             button.image = image
             button.imageScaling = .scaleProportionallyDown
             button.imagePosition = .imageOnly
-            button.frame = NSRect(x: 0, y: 0, width: 26, height: 22)
-            button.wantsLayer = true
+            button.contentTintColor = .labelColor
             button.toolTip = "Gravtail · 点击打开设置"
             button.setAccessibilityLabel("打开 Gravtail 设置")
             button.setAccessibilityHelp("打开 Gravtail 工作、休息和退出选项")
