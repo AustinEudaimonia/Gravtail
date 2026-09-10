@@ -626,7 +626,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         settings.set(true, forKey: "hasCompletedOnboarding")
         DiagnosticLog.shared.record("accessibility-granted")
         settingsSummary?.stringValue = "授权完成 · Gravtail 已准备好"
-        settingsPrimaryButton?.title = "开始使用"
+        settingsPrimaryButton?.title = "确认"
 
         // Keep the completion state visible briefly, then return the user to
         // the app they were configuring. The next real input starts timing;
@@ -859,7 +859,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private var settingsPrimaryTitle: String {
         if !physicalWeightingEnabled { return "开启鼠标加重…" }
-        return pointerController.isTrusted ? "开始使用" : "去授权鼠标加重…"
+        return pointerController.isTrusted ? "确认" : "去授权鼠标加重…"
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
@@ -881,15 +881,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if !physicalWeightingEnabled {
             physicalWeightingEnabled = true
         }
-        guard pointerController.isTrusted else {
-            enablePermission()
-            settingsSummary?.stringValue = "请在系统设置中打开 Gravtail 的辅助功能权限，然后回到这里点击“开始使用”。"
-            settingsPrimaryButton?.title = settingsPrimaryTitle
+        if pointerController.isTrusted {
+            confirmSettings()
             return
         }
 
-        // The session still begins on the next real keyboard/mouse input. This
-        // keeps opening or clicking Settings from consuming work time.
+        enablePermission()
+        settingsSummary?.stringValue = "请在系统设置中打开 Gravtail 的辅助功能权限，然后回到这里点击“确认”。"
+        settingsPrimaryButton?.title = settingsPrimaryTitle
+    }
+
+    @objc private func confirmSettings() {
+        guard pointerController.isTrusted else { return }
+
+        // Settings changes are persisted by their controls. Confirmation only
+        // commits the current onboarding state and collapses this window;
+        // Gravtail remains alive in the background.
         settings.set(true, forKey: "hasCompletedOnboarding")
         sessionInputBaselineUptime = ProcessInfo.processInfo.systemUptime
         settingsWindow?.orderOut(nil)

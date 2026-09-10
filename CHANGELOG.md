@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.22
+
+- Add a clear “确认” action for trusted users in the settings window.
+- Confirmation saves the current setup, collapses the window, and leaves
+  Gravtail running in the background.
+- Keep the authorization action visible until Accessibility permission exists.
+
 ## 0.4.21
 
 - Simplify the menu-bar mark to the original transparent Gravtail comet-cursor
