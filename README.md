@@ -136,6 +136,8 @@ content, pointer coordinates, or browsing activity—in
 4. 安装完成后直接打开 `Gravtail.app`。安装器会先验证下载包和本地签名，再移除 App 的下载隔离标记，因此不再要求第二次按住 Control 打开。
 5. 点击顶部 Gravtail 图标 → **开启鼠标加重…**，在“系统设置 → 隐私与安全性 → 辅助功能”中打开 Gravtail。
 
+请始终运行 Release ZIP 里的“安装 Gravtail.command”，不要直接双击 ZIP 内的 `Gravtail.app`。直接打开载荷会使用发布包的签名身份；如果这台 Mac 之前已经授权过另一张本地证书，系统设置仍可能显示 Gravtail 已开启，但当前运行的 App 会被 macOS 判定为未授权。安装器会按已安装 App 的证书指纹重签并保留旧身份，包括早期版本使用的 `Heavy Cursor Local`。
+
 私钥只留在这台 Mac，不会上传给项目作者或 GitHub；证书也只被信任用于代码签名。安装脚本不能代替用户授予辅助功能权限。更新时先退出 Gravtail，再运行新版本中的同一个安装脚本；它会复用同一证书、Bundle ID 和安装路径，让 macOS 尽可能把更新识别为同一个 App。不要删除钥匙串中的 `Gravtail Local`。完整说明见 [COMMUNITY_INSTALL.md](COMMUNITY_INSTALL.md)。
 
 For a local, non-persistent preview of the full 45-minute effect:
