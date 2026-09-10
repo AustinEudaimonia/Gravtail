@@ -20,6 +20,7 @@ swiftc -swift-version 5 -warnings-as-errors \
   -o "$TEST_DIR/RecoveryWatchdogTests"
 "$TEST_DIR/RecoveryWatchdogTests"
 /bin/zsh "$PROJECT_DIR/Tests/SigningIdentityTests.sh"
+/bin/zsh "$PROJECT_DIR/Tests/SettingsFlowTests.sh"
 
 for arch in arm64 x86_64; do
   swiftc \
