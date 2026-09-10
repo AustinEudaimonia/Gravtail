@@ -21,6 +21,7 @@ swiftc -swift-version 5 -warnings-as-errors \
 "$TEST_DIR/RecoveryWatchdogTests"
 /bin/zsh "$PROJECT_DIR/Tests/SigningIdentityTests.sh"
 /bin/zsh "$PROJECT_DIR/Tests/SettingsFlowTests.sh"
+/bin/zsh "$PROJECT_DIR/Tests/AccessibilityDiagnosticTests.sh"
 
 for arch in arm64 x86_64; do
   swiftc \
@@ -40,6 +41,8 @@ zsh -n \
   "$PROJECT_DIR/scripts/install-community-build.sh" \
   "$PROJECT_DIR/scripts/select-signing-identity.sh" \
   "$PROJECT_DIR/Tests/SigningIdentityTests.sh" \
+  "$PROJECT_DIR/Tests/SettingsFlowTests.sh" \
+  "$PROJECT_DIR/Tests/AccessibilityDiagnosticTests.sh" \
   "$PROJECT_DIR/Tests/InstallerIntegrationTests.sh"
 
 if grep -R -q '@_silgen_name' "$PROJECT_DIR/Sources"; then

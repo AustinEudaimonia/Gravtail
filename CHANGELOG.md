@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.23
+
+- Fix a misleading command-line Accessibility check that could report
+  Terminal's permission instead of Gravtail.app's permission.
+- Explain and preserve legacy local signing identities during community
+  installation, including `Heavy Cursor Local`.
+- Add a clear recovery path when System Settings shows Gravtail enabled but
+  the currently opened App was launched directly from a ZIP payload.
+
 ## 0.4.22
 
 - Add a clear “确认” action for trusted users in the settings window.

@@ -887,7 +887,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
 
         enablePermission()
-        settingsSummary?.stringValue = "请在系统设置中打开 Gravtail 的辅助功能权限，然后回到这里点击“确认”。"
+        settingsSummary?.stringValue = "请在系统设置中打开 Gravtail 的辅助功能权限，然后回到这里点击“确认”。如果开关已开启但这里仍未变化，请退出后运行安装包中的“安装 Gravtail.command”，不要直接打开 ZIP 里的 App，以便沿用原有签名身份。"
         settingsPrimaryButton?.title = settingsPrimaryTitle
     }
 
@@ -1054,7 +1054,13 @@ if let watchdogIndex = ProcessInfo.processInfo.arguments.firstIndex(of: "--hid-w
     )
     exit(result)
 } else if ProcessInfo.processInfo.arguments.contains("--check-accessibility") {
-    print(AXIsProcessTrusted() ? "trusted" : "not-trusted")
+    // This branch runs the executable as a child of Terminal, so the result
+    // describes Terminal's TCC context rather than the bundled app. Reporting
+    // it as Gravtail's status is a false positive and can make an already
+    // authorised user chase the wrong setting. The real check is performed by
+    // the normal NSApplication process and is recorded in Gravtail.log.
+    fputs("命令行模式不能代表 Gravtail.app；请直接打开已安装的 Gravtail.app 查看辅助功能状态。\n", stderr)
+    exit(2)
 } else if ProcessInfo.processInfo.arguments.contains("--check-hid") {
     // Diagnostics must be read-only; normal app launches still restore an
     // orphaned backup automatically.
