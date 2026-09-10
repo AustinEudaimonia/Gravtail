@@ -6,7 +6,30 @@
   <img src="Resources/HeavyCursorIconMaster.png" alt="Gravtail comet icon" width="180" />
 </p>
 
+<p align="center"><strong>工作越久，鼠标越重；起身走一会，它才恢复。</strong></p>
+
+<p align="center">
+  <a href="https://github.com/AustinEudaimonia/Gravtail/releases/latest">下载 macOS 版</a>
+  ·
+  <a href="COMMUNITY_INSTALL.md">查看安装说明</a>
+  ·
+  <a href="https://github.com/AustinEudaimonia/Gravtail/issues">反馈问题</a>
+</p>
+
 Gravtail 是一个轻量的 macOS 菜单栏应用。它不靠突然弹出的系统通知打断你，而是把“久坐时间”变成光标本身的环境反馈：使用电脑越久，光标后的 comet（彗尾）越长、越粗，鼠标响应也会逐渐变重；起身离开一段时间后，光标恢复轻盈。
+
+它不是一个更复杂的生产力面板，也不是一套打卡系统。它只做一件事：在你忘记起身之前，让正在使用的鼠标先告诉你。
+
+## 30 秒看懂
+
+| 你连续使用电脑的时间 | 你会看到什么 | 鼠标会发生什么 |
+| --- | --- | --- |
+| 前半段 | 一条几乎看不见的 comet | 保持正常 |
+| 越接近设定时间 | 彗尾逐渐变长、变粗、变重 | 灵敏度平滑下降 |
+| 到达设定时间 | 顶部出现“起身动一下” | 进入最重状态 |
+| 完成休息 | 彗尾消失，出现恢复提示 | 恢复原始设置 |
+
+默认支持 **45 / 60 / 90 分钟**工作时长和 **3 / 5 / 10 分钟**休息时长。最重状态下的硬件加速度目标约为原值的 10%，但鼠标始终保持可用，不会锁死光标或阻止文本输入。
 
 ## 为什么要做 Gravtail
 
