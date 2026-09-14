@@ -21,6 +21,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return controller
     }
     private let breakReminder = BreakReminderPanel()
+    private let reminderSoundPlayer = ReminderSoundPlayer()
     private let hidRecoveryWatchdog = RecoveryWatchdog()
     private var sessionSafetyDisabled = false
     private var pendingRecoveryNotice = false
@@ -31,6 +32,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var physicalWeightingEnabled: Bool {
         get { settings.bool(forKey: "physicalWeightingEnabled") }
         set { settings.set(newValue, forKey: "physicalWeightingEnabled") }
+    }
+
+    private var reminderSoundsEnabled: Bool {
+        get {
+            guard settings.object(forKey: ReminderSoundPolicy.settingsKey) != nil else {
+                return ReminderSoundPolicy.defaultEnabled
+            }
+            return settings.bool(forKey: ReminderSoundPolicy.settingsKey)
+        }
+        set { settings.set(newValue, forKey: ReminderSoundPolicy.settingsKey) }
     }
 
     private var statusItem: NSStatusItem?
@@ -376,6 +387,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         )
         if progressMark > lastProgressReminderMark {
             lastProgressReminderMark = progressMark
+            if reminderSoundsEnabled {
+                reminderSoundPlayer.play(.progress)
+            }
             breakReminder.showProgress(remaining: clock.remaining)
         }
         if clock.elapsed >= clock.interval {
@@ -385,6 +399,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 breakReminder.setPaused(clock.isPaused, remaining: remaining)
             } else {
                 hasShownBreakReminder = true
+                if reminderSoundsEnabled {
+                    reminderSoundPlayer.play(.breakStarted)
+                }
                 breakReminder.showBreak(
                     remaining: remaining,
                     onSkip: { [weak self] in self?.skipBreak() },
@@ -433,6 +450,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             hardwareActive: hidAccelerationController.isActive,
             watchdogRunning: hidRecoveryWatchdog.isRunning) {
             pendingRecoveryNotice = false
+            if reminderSoundsEnabled {
+                reminderSoundPlayer.play(.breakEnded)
+            }
             breakReminder.showRecovered()
         }
         settingsSummary?.stringValue = statusText
@@ -782,6 +802,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let loginItem = NSMenuItem(title: "配置开机启动…", action: #selector(openLoginItemsSettings), keyEquivalent: "")
         loginItem.target = self
         menu.addItem(loginItem)
+        let soundItem = NSMenuItem(
+            title: reminderSoundsEnabled ? "关闭提醒音效" : "开启提醒音效",
+            action: #selector(toggleReminderSounds),
+            keyEquivalent: ""
+        )
+        soundItem.target = self
+        menu.addItem(soundItem)
         let toggle = NSMenuItem(title: physicalWeightingEnabled ? "关闭鼠标加重" : "开启鼠标加重…",
                                 action: #selector(toggleWeighting), keyEquivalent: "")
         toggle.target = self
@@ -899,6 +926,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if settingsWindow?.isVisible == true { showSettingsWindow() }
     }
 
+    @objc private func toggleReminderSounds() {
+        reminderSoundsEnabled.toggle()
+        if settingsWindow?.isVisible == true { showSettingsWindow() }
+    }
+
+    @objc private func setReminderSounds(_ sender: NSButton) {
+        reminderSoundsEnabled = sender.state == .on
+    }
+
     @objc private func settingsPrimaryAction() {
         if !physicalWeightingEnabled {
             physicalWeightingEnabled = true
@@ -928,21 +964,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func showSettingsWindow() {
-        let window = settingsWindow ?? NSWindow(contentRect: NSRect(x: 0, y: 0, width: 420, height: 310),
+        let window = settingsWindow ?? NSWindow(contentRect: NSRect(x: 0, y: 0, width: 420, height: 340),
             styleMask: [.titled, .closable, .miniaturizable], backing: .buffered, defer: false)
+        window.setContentSize(NSSize(width: 420, height: 340))
         if settingsWindow == nil { window.center() }
         window.title = "Gravtail 设置"
         window.isReleasedWhenClosed = false
-        let content = NSView(frame: NSRect(x: 0, y: 0, width: 420, height: 310))
+        let content = NSView(frame: NSRect(x: 0, y: 0, width: 420, height: 340))
         let summary = NSTextField(wrappingLabelWithString: statusText)
-        summary.frame = NSRect(x: 24, y: 246, width: 372, height: 44)
+        summary.frame = NSRect(x: 24, y: 276, width: 372, height: 44)
         content.addSubview(summary)
         settingsSummary = summary
         for (row, title, values, selected, action) in [
             (0, "工作时长", [45, 60, 90], Int(selectedInterval / 60), #selector(changeWorkSetting(_:))),
             (1, "休息时长", [3, 5, 10], Int(selectedBreakDuration / 60), #selector(changeBreakSetting(_:)))
         ] {
-            let y = CGFloat(205 - row * 36)
+            let y = CGFloat(235 - row * 36)
             let label = NSTextField(labelWithString: title)
             label.frame = NSRect(x: 24, y: y, width: 100, height: 24)
             content.addSubview(label)
@@ -956,8 +993,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let toggle = NSButton(checkboxWithTitle: "启用鼠标加重（关闭后保留彗尾和提醒）",
                               target: self, action: #selector(toggleWeighting))
         toggle.state = physicalWeightingEnabled ? .on : .off
-        toggle.frame = NSRect(x: 24, y: 131, width: 372, height: 24)
+        toggle.frame = NSRect(x: 24, y: 161, width: 372, height: 24)
         content.addSubview(toggle)
+
+        let soundToggle = NSButton(checkboxWithTitle: "启用提醒音效（15/30 分钟、起身和恢复）",
+                                   target: self, action: #selector(setReminderSounds(_:)))
+        soundToggle.state = reminderSoundsEnabled ? .on : .off
+        soundToggle.frame = NSRect(x: 24, y: 135, width: 372, height: 24)
+        content.addSubview(soundToggle)
 
         let primary = NSButton(title: settingsPrimaryTitle, target: self, action: #selector(settingsPrimaryAction))
         primary.frame = NSRect(x: 110, y: 56, width: 200, height: 34)
@@ -967,7 +1010,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         settingsPrimaryButton = primary
 
         let loginItemButton = NSButton(title: "配置开机启动…", target: self, action: #selector(openLoginItemsSettings))
-        loginItemButton.frame = NSRect(x: 110, y: 94, width: 200, height: 28)
+        loginItemButton.frame = NSRect(x: 110, y: 96, width: 200, height: 28)
         loginItemButton.bezelStyle = .rounded
         content.addSubview(loginItemButton)
 

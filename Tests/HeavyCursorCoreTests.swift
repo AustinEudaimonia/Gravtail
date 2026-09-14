@@ -186,6 +186,14 @@ enum HeavyCursorCoreTests {
             "login-item prompt is not repeated after the user has seen it"
         )
 
+        expect(ReminderSoundPolicy.defaultEnabled, "reminder sounds are enabled by default")
+        expect(ReminderSoundEvent.progress.systemSoundName == "Tink",
+               "progress reminders use a subtle built-in sound")
+        expect(ReminderSoundEvent.breakStarted.systemSoundName == "Glass",
+               "break start uses a distinct built-in sound")
+        expect(ReminderSoundEvent.breakEnded.systemSoundName == "Hero",
+               "break completion uses a distinct built-in sound")
+
         let fortyFiveMinutes: TimeInterval = 45 * 60
         expect(ReminderSchedule.progressMark(elapsed: 14 * 60 + 59, workInterval: fortyFiveMinutes) == 0, "no reminder before fifteen minutes")
         expect(ReminderSchedule.progressMark(elapsed: 15 * 60, workInterval: fortyFiveMinutes) == 1, "first reminder occurs at fifteen minutes")

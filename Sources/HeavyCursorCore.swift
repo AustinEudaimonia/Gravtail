@@ -85,6 +85,25 @@ enum ReminderSchedule {
     }
 }
 
+enum ReminderSoundPolicy {
+    static let defaultEnabled = true
+    static let settingsKey = "reminderSoundsEnabled"
+}
+
+enum ReminderSoundEvent {
+    case progress
+    case breakStarted
+    case breakEnded
+
+    var systemSoundName: String {
+        switch self {
+        case .progress: return "Tink"
+        case .breakStarted: return "Glass"
+        case .breakEnded: return "Hero"
+        }
+    }
+}
+
 enum RecoveryNoticePolicy {
     static func shouldShow(pending: Bool, hardwareRestored: Bool, hardwareActive: Bool,
                            watchdogRunning: Bool) -> Bool {

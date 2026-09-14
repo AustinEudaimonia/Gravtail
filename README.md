@@ -50,6 +50,8 @@ Gravtail 是一个轻量的 macOS 菜单栏应用。它不靠突然弹出的系�
 
 你可以选择 **45 / 60 / 90 分钟**的连续使用时间，以及 **3 / 5 / 10 分钟**的休息时长。应用启动或重置后，会等到第一次真实的键盘/鼠标输入才开始计时；工作阶段不会因为几分钟没有输入而自动把本轮归零。每 15 分钟，屏幕上方会出现一个短暂的小胶囊，告诉你距离起身还剩多久；到点后胶囊会显示休息倒计时。休息阶段的键盘或鼠标输入会重新开始休息倒计时，完整休息后进入下一轮。
 
+每个进度胶囊、进入休息和休息完成都会播放一次短促的 macOS 内置音效；设置中可以关闭提醒音效，关闭后仍保留所有视觉提醒。
+
 鼠标加重是独立开关：选择“暂不开启”或在设置里关闭后，所有阶段都只保留彗尾和提醒。Gravtail 不再需要辅助功能权限；旧版本升级后可以在系统设置中移除原先的 Gravtail 辅助功能授权。
 
 打开或重新打开 `Gravtail.app` 会显示设置窗口。菜单栏空间不足、图标被 macOS 隐藏时，也能直接调整时长、关闭加重、重置或退出。关闭设置窗口不会退出应用。
@@ -86,6 +88,7 @@ A deliberately small macOS menu bar app: the longer you use your Mac, the heavie
 - After the first physical input, a subtle comet confirms that Gravtail is running while physical pointer response stays unchanged during the first half.
 - During the second half, a comet grows continuously and pointer response eases down to 10% at maximum weight.
 - Every 15 minutes, a four-second pill reports how long remains before it is time to move.
+- Progress pills, break start, and break completion each play one short built-in macOS sound; sounds can be disabled without removing the visual reminders.
 - At the selected limit, the pill stays visible with a live break countdown and Quit action.
 - During that break countdown, the native pointer remains fully usable (including text I-beam hit testing) while the system acceleration stays reduced; keyboard or pointer input simply restarts the countdown.
 - Pills sit at the upper center of the main screen, below the menu bar and away from bottom-center voice tools such as Typeless.
