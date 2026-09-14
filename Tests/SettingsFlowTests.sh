@@ -11,6 +11,9 @@ fail() {
 
 grep -Fq 'physicalWeightingEnabled ? "确认" : "开启鼠标加重"' "$SOURCE" || fail "settings need a direct hardware-weighting confirmation label"
 grep -Fq '@objc private func confirmSettings()' "$SOURCE" || fail "confirm button needs a dedicated dismissal action"
+grep -Fq 'SMAppService.openSystemSettingsLoginItems()' "$SOURCE" || fail "login-item guidance must open the native System Settings page"
+grep -Fq 'showLoginItemPromptIfNeeded()' "$SOURCE" || fail "first-run flow must offer login-item setup guidance"
+grep -Fq '配置开机启动…' "$SOURCE" || fail "settings need a persistent login-item setup entry"
 
 grep -Fq 'pointerController' "$SOURCE" && fail "settings must not depend on a global pointer event tap"
 grep -Fq '辅助功能权限' "$SOURCE" && fail "hardware-only weighting must not request Accessibility permission"

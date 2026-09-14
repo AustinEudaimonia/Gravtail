@@ -144,7 +144,7 @@ done
 print ""
 print "Gravtail 已安装并绑定到这台 Mac 的本地签名。"
 print "现在可以直接打开 Gravtail.app；安装器已验证并移除它的下载隔离标记。"
-print "然后在顶部 Gravtail 菜单选择“开启鼠标加重…”，授予一次辅助功能权限。"
+print "首次启动时请完成工作/休息与鼠标加重设置；如需登录后自动启动，可按提示打开 macOS 登录项设置。"
 print "以后更新请继续运行新版安装包中的此脚本；不要删除钥匙串里的 '${IDENTITY_NAME}'。"
 
 if [[ "${GRAVTAIL_SKIP_LAUNCH:-0}" != "1" ]]; then

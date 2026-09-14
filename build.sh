@@ -57,6 +57,7 @@ for arch in $ARCHS; do
     -target "$arch-apple-macosx13.0" \
     -framework Cocoa \
     -framework ApplicationServices \
+    -framework ServiceManagement \
     -framework IOKit \
     "$PROJECT_DIR"/Sources/*.swift \
     -o "$output"

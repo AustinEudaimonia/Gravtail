@@ -164,6 +164,28 @@ enum HeavyCursorCoreTests {
             "UI preview never changes pointer behavior"
         )
 
+        expect(
+            LoginItemPromptPolicy.shouldPrompt(
+                hasCompletedOnboarding: true,
+                hasPrompted: false
+            ),
+            "completed onboarding prompts once for manual login-item setup"
+        )
+        expect(
+            !LoginItemPromptPolicy.shouldPrompt(
+                hasCompletedOnboarding: false,
+                hasPrompted: false
+            ),
+            "login-item prompt waits until the initial setup is complete"
+        )
+        expect(
+            !LoginItemPromptPolicy.shouldPrompt(
+                hasCompletedOnboarding: true,
+                hasPrompted: true
+            ),
+            "login-item prompt is not repeated after the user has seen it"
+        )
+
         let fortyFiveMinutes: TimeInterval = 45 * 60
         expect(ReminderSchedule.progressMark(elapsed: 14 * 60 + 59, workInterval: fortyFiveMinutes) == 0, "no reminder before fifteen minutes")
         expect(ReminderSchedule.progressMark(elapsed: 15 * 60, workInterval: fortyFiveMinutes) == 1, "first reminder occurs at fifteen minutes")

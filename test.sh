@@ -18,7 +18,9 @@ swiftc \
 # intercepting, disconnecting, or warping the global pointer ships in the
 # executable. This is a binary-boundary safety contract, not a source grep.
 SAFETY_BINARY="${TEST_DIR}/GravtailPointerSafety"
-swiftc -swift-version 5 "$PROJECT_DIR"/Sources/*.swift -o "$SAFETY_BINARY"
+swiftc -swift-version 5 \
+  -framework ServiceManagement \
+  "$PROJECT_DIR"/Sources/*.swift -o "$SAFETY_BINARY"
 unsafe_pointer_symbols="$(nm -u "$SAFETY_BINARY" | grep -E \
   'CGWarpMouseCursorPosition|CGAssociateMouseAndMouseCursorPosition|CGEventTapCreate|AXIsProcessTrusted' \
   || true)"

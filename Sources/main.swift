@@ -1,5 +1,6 @@
 import Cocoa
 import Darwin
+import ServiceManagement
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let settings = UserDefaults.standard
@@ -100,13 +101,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         startTimers()
         if !isAnyPreview {
             showOnboardingIfNeeded()
+            let openedLoginItemsSettings = showLoginItemPromptIfNeeded()
             if settings.object(forKey: "physicalWeightingEnabled") == nil {
                 // Older versions did not persist the user's choice. Keep
                 // physical weighting opt-in across upgrades.
                 physicalWeightingEnabled = false
             }
-            // A visible entry point even when macOS has no room for our item.
-            showSettingsWindow()
+            // Do not immediately activate Gravtail after sending the user to
+            // System Settings, otherwise this window would steal focus and
+            // make the jump look like it failed.
+            if !openedLoginItemsSettings {
+                // A visible entry point even when macOS has no room for our item.
+                showSettingsWindow()
+            }
         }
         DiagnosticLog.shared.record("launch", fields: [
             "app": Bundle.main.bundlePath,
@@ -276,6 +283,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         permission.addButton(withTitle: "开启")
         permission.addButton(withTitle: "暂不开启")
         physicalWeightingEnabled = permission.runModal() == .alertFirstButtonReturn
+    }
+
+    @discardableResult
+    private func showLoginItemPromptIfNeeded() -> Bool {
+        guard LoginItemPromptPolicy.shouldPrompt(
+            hasCompletedOnboarding: settings.bool(forKey: "hasCompletedOnboarding"),
+            hasPrompted: settings.bool(forKey: "hasPromptedLoginItemSetup")
+        ) else { return false }
+
+        // Mark the explanation as shown before opening the modal. Choosing
+        // “以后再说” is a valid decision and should not become a launch loop.
+        settings.set(true, forKey: "hasPromptedLoginItemSetup")
+
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = "要让 Gravtail 登录后自动启动吗？"
+        alert.informativeText = "点击“打开登录项设置”，再把 Gravtail 添加到“登录时打开”。Gravtail 不会自动修改系统设置。"
+        alert.addButton(withTitle: "打开登录项设置")
+        alert.addButton(withTitle: "以后再说")
+
+        if alert.runModal() == .alertFirstButtonReturn {
+            openLoginItemsSettings()
+            return true
+        }
+        return false
+    }
+
+    @objc private func openLoginItemsSettings() {
+        if #available(macOS 13.0, *) {
+            SMAppService.openSystemSettingsLoginItems()
+        } else if let url = URL(string: "x-apple.systempreferences:com.apple.LoginItems-Settings.extension") {
+            NSWorkspace.shared.open(url)
+        }
+        DiagnosticLog.shared.record("login-items-settings-opened")
     }
 
     private func startTimers() {
@@ -738,6 +779,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let settingsItem = NSMenuItem(title: "设置…", action: #selector(showSettingsWindow), keyEquivalent: ",")
         settingsItem.target = self
         menu.addItem(settingsItem)
+        let loginItem = NSMenuItem(title: "配置开机启动…", action: #selector(openLoginItemsSettings), keyEquivalent: "")
+        loginItem.target = self
+        menu.addItem(loginItem)
         let toggle = NSMenuItem(title: physicalWeightingEnabled ? "关闭鼠标加重" : "开启鼠标加重…",
                                 action: #selector(toggleWeighting), keyEquivalent: "")
         toggle.target = self
@@ -916,18 +960,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         content.addSubview(toggle)
 
         let primary = NSButton(title: settingsPrimaryTitle, target: self, action: #selector(settingsPrimaryAction))
-        primary.frame = NSRect(x: 110, y: 76, width: 200, height: 34)
+        primary.frame = NSRect(x: 110, y: 56, width: 200, height: 34)
         primary.bezelStyle = .rounded
         primary.keyEquivalent = "\r"
         content.addSubview(primary)
         settingsPrimaryButton = primary
+
+        let loginItemButton = NSButton(title: "配置开机启动…", target: self, action: #selector(openLoginItemsSettings))
+        loginItemButton.frame = NSRect(x: 110, y: 94, width: 200, height: 28)
+        loginItemButton.bezelStyle = .rounded
+        content.addSubview(loginItemButton)
 
         for (x, title, action) in [
             (24, "重置本轮", #selector(resetSession)),
             (271, "退出 Gravtail", #selector(quitApplication))
         ] {
             let button = NSButton(title: title, target: self, action: action)
-            button.frame = NSRect(x: x, y: 22, width: 125, height: 32)
+            button.frame = NSRect(x: x, y: 16, width: 125, height: 32)
             button.bezelStyle = .rounded
             content.addSubview(button)
         }

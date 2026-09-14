@@ -43,6 +43,15 @@ enum MenuBarFallbackPolicy {
     }
 }
 
+enum LoginItemPromptPolicy {
+    /// The app explains manual login-item setup only after the first-run
+    /// Gravtail choices are complete, and records that the explanation was
+    /// shown so a user who chooses “以后再说” is not nagged on every launch.
+    static func shouldPrompt(hasCompletedOnboarding: Bool, hasPrompted: Bool) -> Bool {
+        hasCompletedOnboarding && !hasPrompted
+    }
+}
+
 enum CursorWeightingMode: Equatable {
     case none
     case hardware
