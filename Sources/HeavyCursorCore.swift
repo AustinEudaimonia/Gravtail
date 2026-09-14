@@ -184,15 +184,6 @@ final class SessionClock {
         // counted as work.
         guard let previous = lastTick else { return false }
         defer { lastTick = now }
-        // Before the work limit, a long idle period means the user already
-        // stepped away and the current work session should reset.
-        if dueSince == nil && idleTime >= breakDuration {
-            let newlyRecovered = !isAway && elapsed > 0
-            elapsed = 0
-            isAway = true
-            return newlyRecovered
-        }
-
         // Once the limit is reached, the break clock starts at the deadline,
         // not at the last input before it. This prevents idle time accumulated
         // while reading just before the deadline from shortening the break.

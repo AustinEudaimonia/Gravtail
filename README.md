@@ -48,7 +48,7 @@ Gravtail 是一个轻量的 macOS 菜单栏应用。它不靠突然弹出的系�
 | 达到设定时间 | 顶部居中的小胶囊提示起身，comet 保持最强 | 达到最重状态，并保留安全响应下限 |
 | 完成休息 | 清除 comet；确认恢复后显示完成提示 | 立即尝试恢复本轮加重前保存的原始设置 |
 
-你可以选择 **45 / 60 / 90 分钟**的连续使用时间，以及 **3 / 5 / 10 分钟**的休息时长。应用启动或重置后，会等到第一次真实的键盘/鼠标输入才开始计时。每 15 分钟，屏幕上方会出现一个短暂的小胶囊，告诉你距离起身还剩多久；到点后胶囊会显示休息倒计时。键盘或鼠标输入会重新开始休息倒计时，完整休息后进入下一轮。
+你可以选择 **45 / 60 / 90 分钟**的连续使用时间，以及 **3 / 5 / 10 分钟**的休息时长。应用启动或重置后，会等到第一次真实的键盘/鼠标输入才开始计时；工作阶段不会因为几分钟没有输入而自动把本轮归零。每 15 分钟，屏幕上方会出现一个短暂的小胶囊，告诉你距离起身还剩多久；到点后胶囊会显示休息倒计时。休息阶段的键盘或鼠标输入会重新开始休息倒计时，完整休息后进入下一轮。
 
 鼠标加重是独立开关：选择“暂不开启”或在设置里关闭后，所有阶段都只保留彗尾和提醒。Gravtail 不再需要辅助功能权限；旧版本升级后可以在系统设置中移除原先的 Gravtail 辅助功能授权。
 
@@ -133,9 +133,9 @@ command:
 
 The app measures physical keyboard and pointer inactivity from macOS HID
 events; window redraws, notifications, and changing message content do not
-count as work input. It cannot verify whether a person physically stood up.
-The configured break duration is therefore a practical inactivity-based proxy
-for taking a break.
+count as work input. After a work session has started, a quiet period does not
+reset the work interval. Once the work limit is reached, the configured break
+duration is used as a practical inactivity-based proxy for taking a break.
 
 For troubleshooting, Gravtail records only state transitions—not keyboard
 content, pointer coordinates, or browsing activity—in

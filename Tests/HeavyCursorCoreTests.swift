@@ -217,6 +217,15 @@ enum HeavyCursorCoreTests {
         _ = clock.tick(now: 311, idleTime: 0)
         expect(!clock.isAway && clock.elapsed == 0, "first returning input begins a fresh session")
 
+        let idleWorkClock = SessionClock(interval: 45 * 60, breakDuration: 5 * 60)
+        idleWorkClock.reset(startingAt: 0)
+        _ = idleWorkClock.tick(now: 15 * 60, idleTime: 0)
+        _ = idleWorkClock.tick(now: 20 * 60, idleTime: 5 * 60)
+        expect(
+            abs(idleWorkClock.elapsed - 20 * 60) < 0.001,
+            "pre-deadline inactivity no longer resets the work session"
+        )
+
         clock.breakDuration = 10 * 60
         expect(clock.breakRemaining(now: 60, idleTime: 60) == 9 * 60, "break duration can change to ten minutes")
 
