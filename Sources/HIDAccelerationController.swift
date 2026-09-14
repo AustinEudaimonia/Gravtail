@@ -83,6 +83,7 @@ final class HIDAccelerationController {
     private var originalMouse: Double?
     private var originalTrackpad: Double?
     private var lastWeight: CGFloat = -1
+    private var lastMinimumAcceleration: Double = -1
     private(set) var isActive = false
     private(set) var lastOperationSucceeded = true
     private(set) var lastRollbackSucceeded = true
@@ -134,7 +135,10 @@ final class HIDAccelerationController {
         (originalMouse, originalTrackpad)
     }
 
-    func update(weight: CGFloat) {
+    func update(
+        weight: CGFloat,
+        minimumAcceleration: Double = HeavyCursorConstants.minimumHardwareAcceleration
+    ) {
         guard !isSafetyDisabled else { return }
         guard handle != 0 else {
             isActive = false
@@ -146,6 +150,10 @@ final class HIDAccelerationController {
             return
         }
         let clamped = max(0, min(1, weight))
+        guard minimumAcceleration.isFinite, minimumAcceleration > 0 else {
+            _ = restore()
+            return
+        }
 
         if clamped <= 0.005 {
             _ = restore()
@@ -166,16 +174,25 @@ final class HIDAccelerationController {
             compatibility = .deviceSettingsUnavailable
             return
         }
-        guard abs(lastWeight - clamped) > 0.005 else { return }
+        // The break changes the acceleration floor while the weight remains
+        // at 1.0. Include the floor in the cache key so that transition is
+        // applied immediately instead of being skipped as a duplicate tick.
+        guard abs(lastWeight - clamped) > 0.005
+                || abs(lastMinimumAcceleration - minimumAcceleration) > 0.0001 else { return }
 
         var changed: [(key: CFString, value: Double)] = []
 
         // A zero or negative acceleration value is not a safe weighting
         // target on every macOS/input-device combination. Leave an already
         // non-positive setting untouched; otherwise preserve at least the
-        // product's 10% minimum response.
+        // product's requested minimum response (10% while working, 5% during
+        // the break). Never write zero or a negative value.
         if let originalMouse,
-           let target = WeightCurve.hardwareAccelerationTarget(original: originalMouse, weight: clamped) {
+           let target = WeightCurve.hardwareAccelerationTarget(
+               original: originalMouse,
+               weight: clamped,
+               minimumAcceleration: minimumAcceleration
+           ) {
             changed.append((Key.mouse, originalMouse))
             guard write(Key.mouse, target) else {
                 failUpdate(afterRollingBack: changed)
@@ -183,7 +200,11 @@ final class HIDAccelerationController {
             }
         }
         if let originalTrackpad,
-           let target = WeightCurve.hardwareAccelerationTarget(original: originalTrackpad, weight: clamped) {
+           let target = WeightCurve.hardwareAccelerationTarget(
+               original: originalTrackpad,
+               weight: clamped,
+               minimumAcceleration: minimumAcceleration
+           ) {
             changed.append((Key.trackpad, originalTrackpad))
             guard write(Key.trackpad, target) else {
                 failUpdate(afterRollingBack: changed)
@@ -209,6 +230,7 @@ final class HIDAccelerationController {
         lastRollbackSucceeded = true
         isActive = true
         lastWeight = clamped
+        lastMinimumAcceleration = minimumAcceleration
     }
 
     @discardableResult
@@ -227,10 +249,12 @@ final class HIDAccelerationController {
                 restoreOrphanedBackupIfNeeded()
                 isActive = false
                 lastWeight = -1
+                lastMinimumAcceleration = -1
                 return didRestoreOrphanedBackup
             }
             isActive = false
             lastWeight = -1
+            lastMinimumAcceleration = -1
             lastOperationSucceeded = true
             lastRollbackSucceeded = true
             return true
@@ -239,6 +263,7 @@ final class HIDAccelerationController {
         if let originalMouse { success = write(Key.mouse, originalMouse) && success }
         if let originalTrackpad { success = write(Key.trackpad, originalTrackpad) && success }
         lastWeight = -1
+        lastMinimumAcceleration = -1
         isActive = false
         lastOperationSucceeded = success
         lastRollbackSucceeded = success
@@ -262,6 +287,7 @@ final class HIDAccelerationController {
             rollbackSucceeded = write(change.key, change.value) && rollbackSucceeded
         }
         lastWeight = -1
+        lastMinimumAcceleration = -1
         isActive = false
         lastRollbackSucceeded = rollbackSucceeded
         // The update failed even if the rollback succeeded. Disable HID

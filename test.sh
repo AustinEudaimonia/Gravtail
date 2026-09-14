@@ -14,6 +14,20 @@ swiftc \
 
 "$TEST_BINARY"
 
+# Link the real application sources and verify that no code path capable of
+# intercepting, disconnecting, or warping the global pointer ships in the
+# executable. This is a binary-boundary safety contract, not a source grep.
+SAFETY_BINARY="${TEST_DIR}/GravtailPointerSafety"
+swiftc -swift-version 5 "$PROJECT_DIR"/Sources/*.swift -o "$SAFETY_BINARY"
+unsafe_pointer_symbols="$(nm -u "$SAFETY_BINARY" | grep -E \
+  'CGWarpMouseCursorPosition|CGAssociateMouseAndMouseCursorPosition|CGEventTapCreate|AXIsProcessTrusted' \
+  || true)"
+if [[ -n "$unsafe_pointer_symbols" ]]; then
+  print -u2 "FAIL: unsafe global pointer symbol linked into Gravtail"
+  print -u2 -- "$unsafe_pointer_symbols"
+  exit 1
+fi
+
 swiftc -swift-version 5 -warnings-as-errors \
   "$PROJECT_DIR/Sources/RecoveryWatchdog.swift" \
   "$PROJECT_DIR/Tests/RecoveryWatchdogTests.swift" \

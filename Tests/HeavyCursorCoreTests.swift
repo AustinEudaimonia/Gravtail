@@ -19,17 +19,68 @@ enum HeavyCursorCoreTests {
         expect(abs(WeightCurve.pointerGain(for: 1) - 0.10) < 0.001, "full weight caps at 10 percent gain")
         expect(WeightCurve.visualWeight(elapsed: 0, interval: interval) >= 0.16, "started session has a visible comet immediately")
         expect(WeightCurve.visualWeight(elapsed: interval, interval: interval) == 1, "deadline keeps the comet at full strength")
+
+        let breakClock = SessionClock(interval: 60, breakDuration: 300)
+        breakClock.reset(startingAt: 0)
+        _ = breakClock.tick(now: 60, idleTime: 0)
+        expect(breakClock.isOnBreak, "the test clock reaches the break state")
+        expect(breakClock.pause(now: 70, idleTime: 10), "break can be paused")
+        let pausedRemaining = breakClock.breakRemaining(now: 170, idleTime: 10)
+        expect(abs(pausedRemaining - 290) < 0.001, "pause freezes the break countdown")
+        _ = breakClock.tick(now: 170, idleTime: 10)
+        expect(breakClock.isPaused, "paused break ignores timer ticks")
+        expect(breakClock.resume(now: 170), "paused break can be resumed")
+        expect(!breakClock.isPaused, "resume clears the paused state")
+        expect(
+            abs(breakClock.breakRemaining(now: 170, idleTime: 0) - 290) < 0.001,
+            "the resume click does not restart the break"
+        )
+        let resumedRemaining = breakClock.breakRemaining(now: 180, idleTime: 20)
+        expect(abs(resumedRemaining - 280) < 0.001, "resume continues from the frozen break time")
+        let afterRealMovement = breakClock.breakRemaining(now: 180, idleTime: 0)
+        expect(abs(afterRealMovement - 300) < 0.001, "real movement after resume restarts the break")
+        breakClock.reset()
+        expect(!breakClock.isPaused && !breakClock.isOnBreak, "reset clears a paused break")
+
         expect(abs(WeightCurve.hardwareScale(for: 1) - 0.10) < 0.001, "hardware weight never reaches zero")
         expect(
-            abs((WeightCurve.hardwareAccelerationTarget(original: 0.6875, weight: 1) ?? 0) - 0.06875) < 0.0001,
-            "maximum hardware weight preserves ten percent of the original value"
+            abs((WeightCurve.hardwareAccelerationTarget(original: 0.6875, weight: 1) ?? 0) - 0.10) < 0.0001,
+            "maximum hardware weight preserves a non-stalling absolute response floor"
         )
         expect(
             WeightCurve.hardwareAccelerationTarget(original: 0, weight: 1) == nil,
             "unsafe non-positive HID values fail open"
         )
-        expect(HeavyCursorConstants.pointerTapActivationWeight > 0, "pointer tap waits for meaningful weight")
-        expect(HeavyCursorConstants.pointerWarpGainThreshold < 1, "near-one gain skips cursor warp")
+        expect(
+            abs((WeightCurve.hardwareAccelerationTarget(original: 0.05, weight: 1) ?? 0) - 0.05) < 0.0001,
+            "the safety floor never increases an already-low native setting"
+        )
+        expect(
+            abs((WeightCurve.hardwareAccelerationTarget(original: 2, weight: 1) ?? 0) - 0.2) < 0.0001,
+            "high native acceleration still reaches the ten-percent curve"
+        )
+        expect(
+            abs((WeightCurve.hardwareAccelerationTarget(
+                original: 0.6875,
+                weight: 1,
+                minimumAcceleration: HeavyCursorConstants.breakMinimumHardwareAcceleration
+            ) ?? 0) - 0.06875) < 0.0001,
+            "the break uses the stronger five-percent safety floor"
+        )
+        expect(
+            abs((WeightCurve.hardwareAccelerationTarget(
+                original: 0.03,
+                weight: 1,
+                minimumAcceleration: HeavyCursorConstants.breakMinimumHardwareAcceleration
+            ) ?? 0) - 0.03) < 0.0001,
+            "the break floor never increases an already-lower native setting"
+        )
+        expect(
+            WeightCurve.hardwareAccelerationTarget(original: 0.6875, weight: 1, minimumAcceleration: 0) == nil,
+            "an invalid acceleration floor fails open"
+        )
+        expect(HeavyCursorConstants.physicalWeightActivationThreshold > 0,
+               "physical weighting waits for a meaningful weight")
         expect(
             !MaintenancePolicy.shouldRotateLog(currentBytes: 100, incomingBytes: 100),
             "small diagnostic logs stay in place"
@@ -42,65 +93,72 @@ enum HeavyCursorCoreTests {
             "diagnostic logs rotate at the size limit"
         )
         expect(MaintenancePolicy.installerBackupsToKeep == 1, "installer keeps one rollback copy")
+        expect(
+            !MenuBarFallbackPolicy.shouldUseFallback(menuBarHeight: 0, nativeWindowHeight: 0),
+            "a hidden menu bar must not be bypassed by a floating launcher"
+        )
+        expect(
+            MenuBarFallbackPolicy.shouldUseFallback(menuBarHeight: 24, nativeWindowHeight: nil),
+            "a visible menu bar with no native status window needs the fallback"
+        )
+        expect(
+            MenuBarFallbackPolicy.shouldUseFallback(menuBarHeight: 24, nativeWindowHeight: 0),
+            "a visible menu bar with a zero-height native window needs the fallback"
+        )
+        expect(
+            !MenuBarFallbackPolicy.shouldUseFallback(menuBarHeight: 24, nativeWindowHeight: 22),
+            "a real native status window must suppress the fallback"
+        )
+        expect(
+            MenuBarFallbackPolicy.shouldUseFallback(
+                menuBarHeight: 24, nativeWindowHeight: 22, nativeWindowOnScreen: false
+            ),
+            "a detached native window must use the fallback even when its height looks valid"
+        )
+        expect(
+            MenuBarFallbackPolicy.shouldUseFallback(
+                menuBarHeight: 24, nativeWindowHeight: 22,
+                nativeWindowOnScreen: true, nativeButtonClipped: true
+            ),
+            "a clipped native button must use the fallback"
+        )
 
         for restored in [false, true] {
             for hardwareActive in [false, true] {
-                for softwareActive in [false, true] {
-                    for watchdogRunning in [false, true] {
-                        let ready = RecoveryNoticePolicy.shouldShow(pending: true,
-                            hardwareRestored: restored, hardwareActive: hardwareActive,
-                            softwareActive: softwareActive, watchdogRunning: watchdogRunning)
-                        expect(ready == (restored && !hardwareActive && !softwareActive && !watchdogRunning),
-                            "recovery notice waits for confirmed restoration and all outgoing paths to stop")
-                    }
+                for watchdogRunning in [false, true] {
+                    let ready = RecoveryNoticePolicy.shouldShow(pending: true,
+                        hardwareRestored: restored, hardwareActive: hardwareActive,
+                        watchdogRunning: watchdogRunning)
+                    expect(ready == (restored && !hardwareActive && !watchdogRunning),
+                        "recovery notice waits for confirmed restoration and the watchdog to stop")
                 }
             }
         }
         expect(!RecoveryNoticePolicy.shouldShow(pending: false, hardwareRestored: true,
-            hardwareActive: false, softwareActive: false, watchdogRunning: false),
+            hardwareActive: false, watchdogRunning: false),
             "completed recovery notice does not repeat")
 
-        for trusted in [false, true] {
-            for onBreak in [false, true] {
-                expect(CursorWeightingPolicy.mode(isUIPreview: false, isOnBreak: onBreak,
-                    isAccessibilityTrusted: trusted, weight: 1,
-                    isPhysicalWeightingEnabled: false) == .none,
-                    "opt-out disables ALL physical weighting even with permission")
-            }
-        }
+        expect(CursorWeightingPolicy.mode(isUIPreview: false, weight: 1,
+            isPhysicalWeightingEnabled: false) == .none,
+            "opt-out disables all physical weighting")
 
         expect(
             CursorWeightingPolicy.mode(
                 isUIPreview: false,
-                isOnBreak: false,
-                isAccessibilityTrusted: true,
                 weight: 0.5, isPhysicalWeightingEnabled: true
-            ) == .software,
-            "active work uses only software weighting"
+            ) == .hardware,
+            "active work never intercepts or warps pointer events"
         )
         expect(
             CursorWeightingPolicy.mode(
                 isUIPreview: false,
-                isOnBreak: true,
-                isAccessibilityTrusted: true,
                 weight: 1, isPhysicalWeightingEnabled: true
             ) == .hardware,
             "break uses only native-cursor hardware weighting"
         )
         expect(
             CursorWeightingPolicy.mode(
-                isUIPreview: false,
-                isOnBreak: false,
-                isAccessibilityTrusted: false,
-                weight: 1, isPhysicalWeightingEnabled: true
-            ) == .none,
-            "untrusted active work fails open"
-        )
-        expect(
-            CursorWeightingPolicy.mode(
                 isUIPreview: true,
-                isOnBreak: true,
-                isAccessibilityTrusted: true,
                 weight: 1, isPhysicalWeightingEnabled: true
             ) == .none,
             "UI preview never changes pointer behavior"

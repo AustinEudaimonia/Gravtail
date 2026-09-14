@@ -1,5 +1,4 @@
 import Cocoa
-import ApplicationServices
 import Darwin
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
@@ -13,8 +12,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         interval: isAnyPreview ? 45 * 60 : selectedInterval,
         breakDuration: selectedBreakDuration
     )
-    private let pointerController = PointerWeightController()
-    private let hidAccelerationController = HIDAccelerationController()
+    private var hidAccelerationControllerStorage: HIDAccelerationController?
+    private var hidAccelerationController: HIDAccelerationController {
+        guard let controller = hidAccelerationControllerStorage else {
+            preconditionFailure("HID controller accessed before single-instance handoff")
+        }
+        return controller
+    }
     private let breakReminder = BreakReminderPanel()
     private let hidRecoveryWatchdog = RecoveryWatchdog()
     private var sessionSafetyDisabled = false
@@ -29,7 +33,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private var statusItem: NSStatusItem?
-    private var topProductIconPanel: NSPanel?
+    private var fallbackProductIconPanel: NSPanel?
+    private var menuBarFallbackCheckWorkItem: DispatchWorkItem?
     private var overlayWindows: [NSWindow] = []
     private var renderTimer: Timer?
     private var logicTimer: Timer?
@@ -39,10 +44,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var hasStartedWorkSession = false
     private var sessionInputBaselineUptime: TimeInterval
     private var isShowingOnboarding = false
-    private var terminatingOldInstancePIDs = Set<pid_t>()
     private var lastDiagnosticState = ""
-    private var lastAccessibilityTrustState: Bool?
-    private var permissionCompletionWorkItem: DispatchWorkItem?
 
     override init() {
         sessionInputBaselineUptime = launchUptime
@@ -70,18 +72,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        terminateOtherInstances()
+        guard terminateOtherInstances() else {
+            DiagnosticLog.shared.record("launch-aborted-existing-instance")
+            NSApp.terminate(nil)
+            return
+        }
+        hidAccelerationControllerStorage = HIDAccelerationController()
         NSApp.setActivationPolicy(isUIPreview ? .regular : .accessory)
         setUpMenuBarIcon()
-        setUpTopProductIconPanel()
+        scheduleMenuBarFallbackCheck()
         if !isUIPreview {
             rebuildOverlayWindows()
         }
 
-        pointerController.gainProvider = { [weak self] in
-            self?.isUIPreview == true ? 1 : (self?.clock.pointerGain ?? 1)
-        }
-        lastAccessibilityTrustState = pointerController.isTrusted
         hidAccelerationController.backupPreparedHandler = { [weak self] mouse, trackpad in
             self?.startHIDRecoveryWatchdog(mouse: mouse, trackpad: trackpad) ?? false
         }
@@ -98,20 +101,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if !isAnyPreview {
             showOnboardingIfNeeded()
             if settings.object(forKey: "physicalWeightingEnabled") == nil {
-                // Older versions did not persist the user's choice. Do not
-                // infer consent from an existing Accessibility grant.
+                // Older versions did not persist the user's choice. Keep
+                // physical weighting opt-in across upgrades.
                 physicalWeightingEnabled = false
             }
             // A visible entry point even when macOS has no room for our item.
             showSettingsWindow()
         }
-        if !isUIPreview {
-            startPointerWeightIfPossible()
-        }
         DiagnosticLog.shared.record("launch", fields: [
             "app": Bundle.main.bundlePath,
             "version": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown",
-            "accessibility": pointerController.isTrusted ? "trusted" : "not-trusted",
             "workMinutes": String(Int(clock.interval / 60)),
             "breakMinutes": String(Int(clock.breakDuration / 60)),
             "hidCompatibility": hidAccelerationController.compatibility.rawValue,
@@ -122,39 +121,67 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             name: NSApplication.didChangeScreenParametersNotification,
             object: nil
         )
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self,
+            selector: #selector(systemWillSleep),
+            name: NSWorkspace.willSleepNotification,
+            object: nil
+        )
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self,
+            selector: #selector(systemDidWake),
+            name: NSWorkspace.didWakeNotification,
+            object: nil
+        )
     }
 
     /// A previous build can still be running when a newly built app is opened
     /// from the Finder. Both copies share the same bundle identifier, so make
-    /// sure an older copy cannot keep its event tap and pointer weighting
-    /// alive after the new copy starts.
-    private func terminateOtherInstances() {
-        guard let bundleIdentifier = Bundle.main.bundleIdentifier else { return }
+    /// sure an older copy cannot keep stale pointer weighting alive after the
+    /// new copy starts.
+    private func terminateOtherInstances() -> Bool {
+        guard let bundleIdentifier = Bundle.main.bundleIdentifier else { return true }
         let currentPID = ProcessInfo.processInfo.processIdentifier
         let currentLaunchDate = NSRunningApplication(processIdentifier: currentPID)?.launchDate
+        var olderPIDs: [pid_t] = []
         for application in NSRunningApplication.runningApplications(withBundleIdentifier: bundleIdentifier)
             where application.processIdentifier != currentPID {
             // Only an older instance should be asked to exit. Without this
             // ordering check, two copies launched close together can see each
-            // other and terminate one another, leaving an old event tap alive
+            // other and terminate one another, leaving old weighting alive
             // just long enough to make Quit appear ineffective.
             let isOlder = application.launchDate.map { otherDate in
                 guard let currentLaunchDate else { return true }
                 return otherDate < currentLaunchDate
             } ?? true
             if isOlder {
-                if application.terminate() {
-                    terminatingOldInstancePIDs.insert(application.processIdentifier)
-                }
+                olderPIDs.append(application.processIdentifier)
+                _ = application.terminate()
             }
         }
+
+        // Never initialize the HID controller while an older copy may still
+        // own a saved acceleration backup. Give the old app enough time to run
+        // its synchronous restoration; if it refuses to exit, this new copy
+        // fails open instead of letting two instances fight over the device.
+        let deadline = ProcessInfo.processInfo.systemUptime + 5
+        while olderPIDs.contains(where: Self.isProcessAlive),
+              ProcessInfo.processInfo.systemUptime < deadline {
+            usleep(20_000)
+        }
+        return !olderPIDs.contains(where: Self.isProcessAlive)
+    }
+
+    private static func isProcessAlive(_ pid: pid_t) -> Bool {
+        errno = 0
+        if kill(pid, 0) == 0 { return true }
+        return errno == EPERM
     }
 
     @discardableResult
     private func restoreHardware() -> Bool {
-        pointerController.stop()
-        pointerTapIsActive = false
-        if hidAccelerationController.restore() {
+        guard let controller = hidAccelerationControllerStorage else { return true }
+        if controller.restore() {
             return stopHIDRecoveryWatchdog()
         } else {
             DiagnosticLog.shared.record("hid-restore-deferred-to-watchdog")
@@ -245,15 +272,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         let permission = NSAlert()
         permission.messageText = "允许 Gravtail 调整鼠标重量"
-        permission.informativeText = "开启后允许 Gravtail 降低鼠标响应，并申请辅助功能权限。选择暂不开启时，所有阶段都只显示彗尾和休息提醒。"
+        permission.informativeText = "开启后，Gravtail 只调整系统鼠标加速度，不拦截、重定位或禁用任何鼠标与键盘事件。选择暂不开启时，仍会显示彗尾和休息提醒。"
         permission.addButton(withTitle: "开启")
         permission.addButton(withTitle: "暂不开启")
-        if permission.runModal() == .alertFirstButtonReturn {
-            physicalWeightingEnabled = true
-            pointerController.requestPermission()
-        } else {
-            physicalWeightingEnabled = false
-        }
+        physicalWeightingEnabled = permission.runModal() == .alertFirstButtonReturn
     }
 
     private func startTimers() {
@@ -273,7 +295,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func logicTick() {
-        observeAccessibilityPermission()
         if hidAccelerationController.isActive && !hidRecoveryWatchdog.pulse() {
             // A stalled loop, dead child or broken IPC ends physical weighting
             // until the user explicitly resets. Never spawn a replacement that
@@ -288,19 +309,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // very heavy pointer effect the preview is meant to demonstrate.
         let idleTime = isAnyPreview ? 0 : currentIdleTime()
         let now = ProcessInfo.processInfo.systemUptime
-        // A previous copy may still be unwinding its event tap and restoring
-        // HID settings. Keep this instance passive until it has exited so two
-        // builds cannot compete for the same pointer stream.
-        if !terminatingOldInstancePIDs.isEmpty {
-            terminatingOldInstancePIDs = terminatingOldInstancePIDs.filter { pid in
-                NSRunningApplication(processIdentifier: pid)?.isTerminated == false
-            }
-            if !terminatingOldInstancePIDs.isEmpty {
-                restoreHardware()
-                return
-            }
-        }
-
         if !isAnyPreview && !isShowingOnboarding && !hasStartedWorkSession {
             if hasPhysicalInputSinceBaseline(now: now, idleTime: idleTime) {
                 hasStartedWorkSession = true
@@ -313,7 +321,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             idleTime: idleTime
         )
         if recovered {
-            pointerController.resetSafetyLockout()
             hidAccelerationController.resetSafetyLockout()
             CometModel.shared.clear()
             needsFinalClear = true
@@ -334,56 +341,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let remaining = clock.breakRemaining(now: now, idleTime: idleTime)
             if hasShownBreakReminder {
                 breakReminder.update(remaining: remaining)
+                breakReminder.setPaused(clock.isPaused, remaining: remaining)
             } else {
                 hasShownBreakReminder = true
-                breakReminder.showBreak(remaining: remaining) { [weak self] in
-                    self?.quitApplication()
+                breakReminder.showBreak(
+                    remaining: remaining,
+                    onSkip: { [weak self] in self?.skipBreak() },
+                    onTogglePause: { [weak self] in self?.toggleBreakPause() }
+                )
+                if clock.isPaused {
+                    breakReminder.setPaused(true, remaining: remaining)
                 }
             }
         }
 
-        let weightingMode = CursorWeightingPolicy.mode(
-            isUIPreview: isUIPreview,
-            isOnBreak: clock.isOnBreak,
-            isAccessibilityTrusted: pointerController.isTrusted,
-            weight: clock.weight,
-            isPhysicalWeightingEnabled: physicalWeightingEnabled && !sessionSafetyDisabled
-        )
+        let weightingMode: CursorWeightingMode = clock.isPaused
+            ? .none
+            : CursorWeightingPolicy.mode(
+                isUIPreview: isUIPreview,
+                weight: clock.weight,
+                isPhysicalWeightingEnabled: physicalWeightingEnabled && !sessionSafetyDisabled
+            )
 
-        // The ordering here is a safety invariant: restore the outgoing
-        // implementation before enabling the incoming one. The old dual-path
-        // behavior compounded both gains and could pin the pointer at zero.
+        // Hardware acceleration is the only physical weighting path. Gravtail
+        // never owns the pointer event stream, so native movement, clicks,
+        // dragging and cursor shapes remain under WindowServer's control.
         switch weightingMode {
-        case .software:
-            let restored = hidAccelerationController.restore()
-            let watchdogStopped = restored && stopHIDRecoveryWatchdog()
-            if restored, watchdogStopped, !sessionSafetyDisabled,
-               !pointerController.isSafetyDisabled,
-               !pointerTapIsActive {
-                pointerTapIsActive = pointerController.start()
-            } else if !restored || !watchdogStopped || sessionSafetyDisabled || pointerController.isSafetyDisabled {
-                if pointerTapIsActive {
-                    pointerController.stop()
-                }
-                pointerTapIsActive = false
-            }
         case .hardware:
-            if pointerTapIsActive {
-                pointerController.stop()
-            }
-            pointerTapIsActive = false
             if hidAccelerationController.isSafetyDisabled {
                 if hidAccelerationController.restore() {
                     stopHIDRecoveryWatchdog()
                 }
             } else {
-                hidAccelerationController.update(weight: clock.weight)
+                let minimumAcceleration = clock.isOnBreak
+                    ? HeavyCursorConstants.breakMinimumHardwareAcceleration
+                    : HeavyCursorConstants.minimumHardwareAcceleration
+                hidAccelerationController.update(
+                    weight: clock.weight,
+                    minimumAcceleration: minimumAcceleration
+                )
             }
         case .none:
-            if pointerTapIsActive {
-                pointerController.stop()
-            }
-            pointerTapIsActive = false
             if hidAccelerationController.restore() {
                 stopHIDRecoveryWatchdog()
             }
@@ -392,7 +390,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if RecoveryNoticePolicy.shouldShow(pending: pendingRecoveryNotice,
             hardwareRestored: hidAccelerationController.lastRollbackSucceeded,
             hardwareActive: hidAccelerationController.isActive,
-            softwareActive: pointerTapIsActive, watchdogRunning: hidRecoveryWatchdog.isRunning) {
+            watchdogRunning: hidRecoveryWatchdog.isRunning) {
             pendingRecoveryNotice = false
             breakReminder.showRecovered()
         }
@@ -401,11 +399,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         recordDiagnosticState()
     }
 
-    private var pointerTapIsActive = false
-
     /// Visual feedback starts subtly with the first real input and remains at
-    /// full strength during the break. This is independent from Accessibility
-    /// permission; only the stronger software pointer transform needs it.
+    /// full strength during the break. Visual rendering never changes input.
     private var activeVisualWeight: CGFloat {
         guard hasStartedWorkSession, !clock.isAway else { return 0 }
         return WeightCurve.visualWeight(elapsed: clock.elapsed, interval: clock.interval)
@@ -445,19 +440,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }.min() ?? .greatestFiniteMagnitude
     }
 
-    /// Returns inactivity based on physical input only. While the pointer
-    /// weighting event tap is active, the app deliberately excludes the
-    /// global mouseMoved HID clock: warping the cursor to apply resistance can
-    /// update that clock without any user movement. The event tap timestamp
-    /// tracks the actual pointer events delivered to the app instead.
+    /// Returns inactivity based on physical HID input only. Gravtail never
+    /// posts or warps pointer events, so the system mouseMoved clock cannot be
+    /// contaminated by the app's own visual or weighting behavior.
     private func currentIdleTime() -> TimeInterval {
-        let hidIdle = Self.secondsSinceLastInput(includeMouseMovement: !pointerTapIsActive)
-        guard pointerTapIsActive,
-              let lastPointerInput = pointerController.lastPhysicalInputUptime else {
-            return hidIdle
-        }
-        let pointerIdle = max(0, ProcessInfo.processInfo.systemUptime - lastPointerInput)
-        return min(hidIdle, pointerIdle)
+        Self.secondsSinceLastInput()
     }
 
     private func hasPhysicalInputSinceBaseline(now: TimeInterval, idleTime: TimeInterval) -> Bool {
@@ -474,7 +461,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func screensChanged() {
         rebuildOverlayWindows()
         breakReminder.screenConfigurationChanged()
-        positionTopProductIconPanel()
+        positionFallbackProductIconPanel()
+        scheduleMenuBarFallbackCheck()
+    }
+
+    @objc private func systemWillSleep() {
+        sessionSafetyDisabled = !restoreHardware()
+    }
+
+    @objc private func systemDidWake() {
+        // A wake begins from known-native pointer state. Wait for the first
+        // fresh physical input instead of carrying a partially elapsed or
+        // weighted session across sleep.
+        sessionSafetyDisabled = !restoreHardware()
+        if !sessionSafetyDisabled {
+            hidAccelerationController.resetSafetyLockout()
+        }
+        hasStartedWorkSession = false
+        clock.reset(startingAt: nil)
+        sessionInputBaselineUptime = ProcessInfo.processInfo.systemUptime
+        CometModel.shared.clear()
+        needsFinalClear = true
+        hasShownBreakReminder = false
+        lastProgressReminderMark = 0
+        breakReminder.hide()
+        DiagnosticLog.shared.record("wake-restored-native-pointer", fields: [
+            "success": sessionSafetyDisabled ? "false" : "true",
+        ])
     }
 
     private func rebuildOverlayWindows() {
@@ -553,11 +566,61 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         ])
     }
 
-    /// Some macOS menu-bar configurations place third-party status items in
-    /// an inaccessible overflow group. Keep a tiny product-mark launcher in
-    /// the menu-bar strip itself so Gravtail remains discoverable and usable.
-    private func setUpTopProductIconPanel() {
+    /// macOS can report an NSStatusItem as visible while keeping its backing
+    /// window at zero height (for example in a crowded or notch-constrained
+    /// menu bar). Give the system a chance to lay it out, then use exactly one
+    /// fallback owner only when the menu bar is visible and the native item is
+    /// still not attached to a real window.
+    private func scheduleMenuBarFallbackCheck() {
         guard !isUIPreview else { return }
+        menuBarFallbackCheckWorkItem?.cancel()
+        let workItem = DispatchWorkItem { [weak self] in
+            self?.evaluateMenuBarEntry()
+        }
+        menuBarFallbackCheckWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.75, execute: workItem)
+    }
+
+    private func evaluateMenuBarEntry() {
+        guard !isUIPreview,
+              fallbackProductIconPanel == nil,
+              let item = statusItem,
+              let screen = NSScreen.main ?? NSScreen.screens.first else { return }
+
+        let menuBarHeight = screen.frame.maxY - screen.visibleFrame.maxY
+        let nativeWindowHeight = item.button?.window?.frame.height
+        let nativeButtonClipped = item.button.map { button in
+            button.visibleRect.minX < 0 || button.visibleRect.minY < 0
+        } ?? true
+        let needsFallback = MenuBarFallbackPolicy.shouldUseFallback(
+            menuBarHeight: menuBarHeight,
+            nativeWindowHeight: nativeWindowHeight,
+            nativeWindowOnScreen: item.button?.window?.screen != nil,
+            nativeButtonClipped: nativeButtonClipped
+        )
+        DiagnosticLog.shared.record("menu-bar-entry-evaluated", fields: [
+            "menuBarHeight": String(format: "%.0f", menuBarHeight),
+            "nativeWindowHeight": nativeWindowHeight.map { String(format: "%.0f", $0) } ?? "nil",
+            "nativeWindowVisible": item.button?.window?.isVisible == true ? "true" : "false",
+            "nativeWindowScreen": item.button?.window?.screen == nil ? "nil" : "present",
+            "buttonHidden": item.button?.isHiddenOrHasHiddenAncestor == true ? "true" : "false",
+            "buttonVisibleRect": item.button.map { NSStringFromRect($0.visibleRect) } ?? "nil",
+            "buttonClipped": nativeButtonClipped ? "true" : "false",
+            "buttonImage": item.button?.image == nil ? "nil" : "present",
+            "fallback": needsFallback ? "true" : "false",
+        ])
+        guard needsFallback else { return }
+
+        // Remove the system-owned item before creating the panel. This is the
+        // invariant that prevents the local fallback from overlapping a native
+        // icon on another Mac.
+        NSStatusBar.system.removeStatusItem(item)
+        statusItem = nil
+        setUpFallbackProductIconPanel()
+    }
+
+    private func setUpFallbackProductIconPanel() {
+        guard fallbackProductIconPanel == nil else { return }
 
         let panel = NSPanel(
             contentRect: NSRect(x: 0, y: 0, width: 28, height: 28),
@@ -583,27 +646,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         button.toolTip = "Gravtail · 点击打开设置"
         button.setAccessibilityLabel("打开 Gravtail 设置")
         button.target = self
-        button.action = #selector(topProductIconClicked)
+        button.action = #selector(fallbackProductIconClicked)
         panel.contentView = button
 
-        topProductIconPanel = panel
-        positionTopProductIconPanel()
+        fallbackProductIconPanel = panel
+        positionFallbackProductIconPanel()
         panel.orderFrontRegardless()
-        DiagnosticLog.shared.record("top-product-icon-ready", fields: [
+        DiagnosticLog.shared.record("menu-bar-fallback-ready", fields: [
             "frame": NSStringFromRect(panel.frame),
-            "level": String(panel.level.rawValue),
         ])
     }
 
-    private func positionTopProductIconPanel() {
-        guard let panel = topProductIconPanel,
+    private func positionFallbackProductIconPanel() {
+        guard let panel = fallbackProductIconPanel,
               let screen = NSScreen.main ?? NSScreen.screens.first else { return }
 
         let menuBarHeight = max(22, screen.frame.maxY - screen.visibleFrame.maxY)
         let panelSize = panel.frame.size
-        // Built-in MacBook displays have a camera housing at the geometric
-        // center of the menu bar. Keep the mark just to its left; otherwise
-        // the panel can be hidden behind the black notch area.
         let displayNumber = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber
         let displayID = displayNumber.map { CGDirectDisplayID($0.uint32Value) }
         let isBuiltInDisplay = displayID.map { CGDisplayIsBuiltin($0) != 0 } ?? false
@@ -613,32 +672,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         panel.setFrameOrigin(NSPoint(x: x, y: y))
     }
 
-    @objc private func topProductIconClicked() {
+    @objc private func fallbackProductIconClicked() {
         showSettingsWindow()
-    }
-
-    private func observeAccessibilityPermission() {
-        let trusted = pointerController.isTrusted
-        defer { lastAccessibilityTrustState = trusted }
-        guard lastAccessibilityTrustState == false, trusted,
-              physicalWeightingEnabled, settingsWindow?.isVisible == true else { return }
-
-        settings.set(true, forKey: "hasCompletedOnboarding")
-        DiagnosticLog.shared.record("accessibility-granted")
-        settingsSummary?.stringValue = "授权完成 · Gravtail 已准备好"
-        settingsPrimaryButton?.title = "确认"
-
-        // Keep the completion state visible briefly, then return the user to
-        // the app they were configuring. The next real input starts timing;
-        // clicking this window or System Settings never consumes work time.
-        permissionCompletionWorkItem?.cancel()
-        let workItem = DispatchWorkItem { [weak self] in
-            guard let self, self.pointerController.isTrusted else { return }
-            self.sessionInputBaselineUptime = ProcessInfo.processInfo.systemUptime
-            self.settingsWindow?.orderOut(nil)
-        }
-        permissionCompletionWorkItem = workItem
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.9, execute: workItem)
     }
 
     func menuNeedsUpdate(_ menu: NSMenu) {
@@ -659,16 +694,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(.separator())
 
         if isAnyPreview {
-            if !pointerController.isTrusted {
-                let permission = NSMenuItem(
-                    title: "开启鼠标加重…",
-                    action: #selector(enablePermission),
-                    keyEquivalent: ""
-                )
-                permission.target = self
-                menu.addItem(permission)
-                menu.addItem(.separator())
-            }
             menu.addItem(NSMenuItem(
                 title: "退出预览",
                 action: #selector(quitApplication),
@@ -723,17 +748,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         reset.target = self
         menu.addItem(reset)
 
-        if physicalWeightingEnabled && !pointerController.isTrusted {
-            menu.addItem(.separator())
-            let permission = NSMenuItem(
-                title: "授予辅助功能权限…",
-                action: #selector(enablePermission),
-                keyEquivalent: ""
-            )
-            permission.target = self
-            menu.addItem(permission)
-        }
-
         menu.addItem(.separator())
         let quit = NSMenuItem(title: "退出 Gravtail", action: #selector(quitApplication), keyEquivalent: "q")
         quit.target = self
@@ -752,26 +766,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             if clock.isAway { return "休息完成 · 鼠标加重未开启" }
             return "仅彗尾和提醒 · 鼠标加重未开启"
         }
-        if !pointerController.isTrusted {
-            if !hasStartedWorkSession {
-                return "需要辅助功能权限 · 点击“去授权鼠标加重”"
-            }
-            if clock.isOnBreak {
-                let now = ProcessInfo.processInfo.systemUptime
-                let effect: String
-                if hidAccelerationController.compatibility != .available {
-                    effect = "当前设备仅支持彗尾"
-                } else {
-                    effect = hidAccelerationController.isActive ? "硬件加重" : "仅彗尾效果"
-                }
-                return "休息中 · \(Self.format(clock.breakRemaining(now: now, idleTime: currentIdleTime()))) · \(effect)"
-            }
-            let minutes = max(1, Int(ceil(clock.remaining / 60)))
-            let effect = hidAccelerationController.isActive ? "硬件加重" : "彗尾已开启"
-            return "距离起身还有 \(minutes) 分钟 · \(effect) · 强加重未开启"
-        }
         if !hasStartedWorkSession {
-            return "已准备好 · 第一次键鼠输入后开始计时"
+            return hidAccelerationController.compatibility == .available
+                ? "已准备好 · 第一次键鼠输入后开始计时"
+                : "已准备好 · 当前设备仅显示彗尾和提醒"
         }
         if isFortyFiveMinutePreview {
             if clock.isAway {
@@ -797,23 +795,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
             return "休息中 · \(Self.format(clock.breakRemaining(now: now, idleTime: currentIdleTime()))) · \(effect)"
         }
-        if pointerController.isSafetyDisabled {
-            return "软件加重已安全停用 · 重置本轮后重试"
-        }
         if clock.remaining <= 0 {
             let now = ProcessInfo.processInfo.systemUptime
-            let effect: String
-            if !pointerTapIsActive {
-                effect = " · 仅彗尾效果"
-            } else if hidAccelerationController.isActive {
-                effect = " · 鼠标加重"
-            } else {
-                effect = " · 软件加重"
-            }
+            let effect = hidAccelerationController.isActive ? " · 鼠标加重" : " · 仅彗尾效果"
             return "该起身了 · \(Self.format(clock.breakRemaining(now: now, idleTime: currentIdleTime())))\(effect)"
         }
         let minutes = max(1, Int(ceil(clock.remaining / 60)))
-        return "距离起身还有 \(minutes) 分钟"
+        return hidAccelerationController.compatibility == .available
+            ? "距离起身还有 \(minutes) 分钟"
+            : "距离起身还有 \(minutes) 分钟 · 仅彗尾效果"
     }
 
     @objc private func selectInterval(_ sender: NSMenuItem) {
@@ -831,12 +821,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func resetSession() {
-        // Resetting from the menu can happen while the event tap is active.
-        // Restore synchronously so the next pointer event is never processed
-        // by a stale weighting transform.
+        // Restore synchronously before starting a fresh timing cycle.
         let restored = restoreHardware()
         sessionSafetyDisabled = !restored
-        pointerController.resetSafetyLockout()
         hidAccelerationController.resetSafetyLockout()
         hasStartedWorkSession = false
         clock.reset(startingAt: nil)
@@ -849,17 +836,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         breakReminder.hide()
     }
 
-    @objc private func enablePermission() {
-        physicalWeightingEnabled = true
-        DiagnosticLog.shared.record("permission-request", fields: [
-            "accessibility": pointerController.isTrusted ? "trusted" : "not-trusted",
-        ])
-        pointerController.requestPermission()
-    }
-
     private var settingsPrimaryTitle: String {
-        if !physicalWeightingEnabled { return "开启鼠标加重…" }
-        return pointerController.isTrusted ? "确认" : "去授权鼠标加重…"
+        physicalWeightingEnabled ? "确认" : "开启鼠标加重"
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
@@ -872,7 +850,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             physicalWeightingEnabled = false
             restoreHardware()
         } else {
-            enablePermission()
+            physicalWeightingEnabled = true
         }
         if settingsWindow?.isVisible == true { showSettingsWindow() }
     }
@@ -881,19 +859,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if !physicalWeightingEnabled {
             physicalWeightingEnabled = true
         }
-        if pointerController.isTrusted {
-            confirmSettings()
-            return
-        }
-
-        enablePermission()
-        settingsSummary?.stringValue = "请在系统设置中打开 Gravtail 的辅助功能权限，然后回到这里点击“确认”。如果开关已开启但这里仍未变化，请退出后运行安装包中的“安装 Gravtail.command”，不要直接打开 ZIP 里的 App，以便沿用原有签名身份。"
-        settingsPrimaryButton?.title = settingsPrimaryTitle
+        confirmSettings()
     }
 
     @objc private func confirmSettings() {
-        guard pointerController.isTrusted else { return }
-
         // Settings changes are persisted by their controls. Confirmation only
         // commits the current onboarding state and collapses this window;
         // Gravtail remains alive in the background.
@@ -973,19 +942,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         NSApp.terminate(nil)
     }
 
-    private func startPointerWeightIfPossible() {
-        let mode = CursorWeightingPolicy.mode(
-            isUIPreview: isUIPreview,
-            isOnBreak: clock.isOnBreak,
-            isAccessibilityTrusted: pointerController.isTrusted,
-            weight: clock.weight,
-            isPhysicalWeightingEnabled: physicalWeightingEnabled && !sessionSafetyDisabled
-        )
-        guard mode == .software else {
-            pointerTapIsActive = false
-            return
+    private func skipBreak() {
+        guard clock.isOnBreak else { return }
+        DiagnosticLog.shared.record("break-skipped")
+        resetSession()
+    }
+
+    private func toggleBreakPause() {
+        guard clock.isOnBreak else { return }
+        let now = ProcessInfo.processInfo.systemUptime
+        if clock.isPaused {
+            guard clock.resume(now: now) else { return }
+            breakReminder.setPaused(false, remaining: clock.breakRemaining(
+                now: now,
+                idleTime: currentIdleTime()
+            ))
+            DiagnosticLog.shared.record("break-resumed")
+        } else {
+            guard clock.pause(now: now, idleTime: currentIdleTime()) else { return }
+            let restored = restoreHardware()
+            sessionSafetyDisabled = !restored
+            breakReminder.setPaused(true, remaining: clock.breakRemaining(
+                now: now,
+                idleTime: currentIdleTime()
+            ))
+            DiagnosticLog.shared.record("break-paused", fields: [
+                "hardwareRestored": restored ? "true" : "false",
+            ])
         }
-        pointerTapIsActive = pointerController.start()
     }
 
     private func recordDiagnosticState() {
@@ -996,7 +980,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             phase = "away"
         } else if clock.isOnBreak {
             phase = "break"
-        } else if clock.weight > HeavyCursorConstants.pointerTapActivationWeight {
+        } else if clock.weight > HeavyCursorConstants.physicalWeightActivationThreshold {
             phase = "weighting"
         } else {
             phase = "early-work"
@@ -1004,10 +988,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         let state = [
             phase,
-            pointerController.isTrusted ? "trusted" : "not-trusted",
-            pointerTapIsActive ? "tap-on" : "tap-off",
             hidAccelerationController.isActive ? "hid-on" : "hid-off",
-            pointerController.isSafetyDisabled ? "tap-safe-off" : "tap-ready",
             hidAccelerationController.isSafetyDisabled ? "hid-safe-off" : "hid-ready",
             hidAccelerationController.compatibility.rawValue,
         ].joined(separator: "|")
@@ -1015,10 +996,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         lastDiagnosticState = state
         DiagnosticLog.shared.record("state", fields: [
             "phase": phase,
-            "accessibility": pointerController.isTrusted ? "trusted" : "not-trusted",
-            "eventTap": pointerTapIsActive ? "active" : "inactive",
             "hid": hidAccelerationController.isActive ? "active" : "inactive",
-            "eventTapSafety": pointerController.isSafetyDisabled ? "disabled" : "ready",
+            "weightingPath": "hid-only",
             "hidSafety": hidAccelerationController.isSafetyDisabled ? "disabled" : "ready",
             "hidCompatibility": hidAccelerationController.compatibility.rawValue,
             "elapsedSeconds": String(Int(clock.elapsed)),
@@ -1044,9 +1023,7 @@ if let watchdogIndex = ProcessInfo.processInfo.arguments.firstIndex(of: "--hid-w
 
     let controller = HIDAccelerationController(restoreOrphanedBackup: false)
     let result = RecoveryWatchdog.run(parentPID: parentPID) {
-        let restored = controller.restoreKnownValues(mouse: mouse, trackpad: trackpad)
-        _ = CGAssociateMouseAndMouseCursorPosition(1)
-        return restored
+        controller.restoreKnownValues(mouse: mouse, trackpad: trackpad)
     }
     DiagnosticLog.shared.record(
         result == 0 ? "hid-watchdog-stopped" : (result == 70 ? "hid-watchdog-restored" : "hid-watchdog-restore-failed"),
@@ -1054,13 +1031,7 @@ if let watchdogIndex = ProcessInfo.processInfo.arguments.firstIndex(of: "--hid-w
     )
     exit(result)
 } else if ProcessInfo.processInfo.arguments.contains("--check-accessibility") {
-    // This branch runs the executable as a child of Terminal, so the result
-    // describes Terminal's TCC context rather than the bundled app. Reporting
-    // it as Gravtail's status is a false positive and can make an already
-    // authorised user chase the wrong setting. The real check is performed by
-    // the normal NSApplication process and is recorded in Gravtail.log.
-    fputs("命令行模式不能代表 Gravtail.app；请直接打开已安装的 Gravtail.app 查看辅助功能状态。\n", stderr)
-    exit(2)
+    print("Gravtail 的硬件加重不需要辅助功能授权")
 } else if ProcessInfo.processInfo.arguments.contains("--check-hid") {
     // Diagnostics must be read-only; normal app launches still restore an
     // orphaned backup automatically.
@@ -1074,7 +1045,6 @@ if let watchdogIndex = ProcessInfo.processInfo.arguments.firstIndex(of: "--hid-w
 } else if ProcessInfo.processInfo.arguments.contains("--restore-hid") {
     let controller = HIDAccelerationController()
     let restored = controller.didRestoreOrphanedBackup
-    _ = CGAssociateMouseAndMouseCursorPosition(1)
     if restored {
         print("HID acceleration restored from saved backup")
     } else if controller.hadOrphanedBackup {
@@ -1091,7 +1061,6 @@ if let watchdogIndex = ProcessInfo.processInfo.arguments.firstIndex(of: "--hid-w
         fputs("Known HID value could not be restored\n", stderr)
         exit(1)
     }
-    _ = CGAssociateMouseAndMouseCursorPosition(1)
     print("HID acceleration restored to \(value)")
 } else {
     let application = NSApplication.shared

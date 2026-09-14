@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+- Remove the global pointer event tap, cursor warping, and mouse/cursor
+  disassociation path entirely. Physical weighting now uses only verified HID
+  acceleration changes, so native movement, clicks, dragging, and cursor
+  shapes remain under macOS control.
+- Add an absolute non-stalling acceleration floor on top of the 10% weight
+  curve; zero and negative acceleration values remain forbidden.
+- Restore native acceleration before sleep and reset the session after wake.
+- Wait for an older Gravtail instance to finish restoring its settings before
+  initializing a new input controller; abort the new launch if handoff fails.
+- Remove the Accessibility permission requirement and its first-run flow.
+- Remove the duplicate status-bar-level floating launcher. Gravtail now owns
+  exactly one macOS-managed `NSStatusItem`, preventing icon ghosting and
+  overlap near the camera notch or clock.
+- Add an exclusive fallback only when a visible menu bar has not attached the
+  native status item; never keep both menu-bar owners at the same time.
+
 ## 0.4.23
 
 - Fix a misleading command-line Accessibility check that could report

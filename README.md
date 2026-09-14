@@ -29,7 +29,7 @@ Gravtail 是一个轻量的 macOS 菜单栏应用。它不靠突然弹出的系�
 | 到达设定时间 | 顶部出现“起身动一下” | 进入最重状态 |
 | 完成休息 | 彗尾消失，出现恢复提示 | 恢复原始设置 |
 
-默认支持 **45 / 60 / 90 分钟**工作时长和 **3 / 5 / 10 分钟**休息时长。最重状态下的硬件加速度目标约为原值的 10%，但鼠标始终保持可用，不会锁死光标或阻止文本输入。
+默认支持 **45 / 60 / 90 分钟**工作时长和 **3 / 5 / 10 分钟**休息时长。最重状态沿用约 10% 的加重曲线，同时设置绝对安全下限；鼠标始终由 macOS 原生事件系统控制，不会被 Gravtail 拦截、重定位或阻止文本输入。
 
 ## 为什么要做 Gravtail
 
@@ -45,16 +45,16 @@ Gravtail 是一个轻量的 macOS 菜单栏应用。它不靠突然弹出的系�
 | --- | --- | --- |
 | 前半段 | 第一次真实输入后显示很轻的 comet | 保持原始灵敏度 |
 | 后半段 | comet 平滑变长、变粗，颜色逐渐变暖 | 逐步降低加速度 |
-| 达到设定时间 | 顶部居中的小胶囊提示起身，comet 保持最强 | 达到最重状态，强加重最低约为原响应的 10% |
+| 达到设定时间 | 顶部居中的小胶囊提示起身，comet 保持最强 | 达到最重状态，并保留安全响应下限 |
 | 完成休息 | 清除 comet；确认恢复后显示完成提示 | 立即尝试恢复本轮加重前保存的原始设置 |
 
 你可以选择 **45 / 60 / 90 分钟**的连续使用时间，以及 **3 / 5 / 10 分钟**的休息时长。应用启动或重置后，会等到第一次真实的键盘/鼠标输入才开始计时。每 15 分钟，屏幕上方会出现一个短暂的小胶囊，告诉你距离起身还剩多久；到点后胶囊会显示休息倒计时。键盘或鼠标输入会重新开始休息倒计时，完整休息后进入下一轮。
 
-鼠标加重是独立开关：选择“暂不开启”或在设置里关闭后，所有阶段都只保留彗尾和提醒，即使此前已授予辅助功能权限也不会加重。旧版本没有保存这项选择时，升级后默认关闭，需要你重新确认开启。
+鼠标加重是独立开关：选择“暂不开启”或在设置里关闭后，所有阶段都只保留彗尾和提醒。Gravtail 不再需要辅助功能权限；旧版本升级后可以在系统设置中移除原先的 Gravtail 辅助功能授权。
 
 打开或重新打开 `Gravtail.app` 会显示设置窗口。菜单栏空间不足、图标被 macOS 隐藏时，也能直接调整时长、关闭加重、重置或退出。关闭设置窗口不会退出应用。
 
-硬件加重前会启动独立恢复进程。主循环超过约 5 秒没有心跳、进程退出或通信断开时，它会尝试恢复保存的设置；主程序恢复运行后不会自动重新加重，需要手动重置。恢复提示只在确认恢复成功后显示。此机制降低异常影响，但不能保证所有 macOS、鼠标驱动和硬件都兼容；休息阶段的硬件加速度参数缩至原值的 10%，不代表每种设备实际移动速度都精确变为 10%。
+硬件加重前会启动独立恢复进程。主循环超过约 5 秒没有心跳、进程退出、电脑睡眠或通信断开时，它会尝试恢复保存的设置；主程序恢复运行后不会自动重新加重，需要手动重置。恢复提示只在确认恢复成功后显示。此机制降低异常影响，但不能保证所有 macOS、鼠标驱动和硬件都兼容；不兼容时会直接保持系统原生鼠标，只显示彗尾和提醒。
 
 ## 视觉语言
 
@@ -110,25 +110,15 @@ retrying live input.
 open ".build/Gravtail.app"
 ```
 
-The comet works as soon as the first physical input starts a session. Gravtail
-can lower the system HID acceleration without Accessibility access, but macOS
-Accessibility permission is required for the stronger event-tap weighting that
-reaches the intended 10% response. Choose **开启鼠标加重…** from the Gravtail
-menu; macOS requests access for the exact running app and offers the direct
-System Settings → Privacy & Security → Accessibility route. The request is
-throttled to once per app launch so duplicate prompts cannot stack.
+The comet works as soon as the first physical input starts a session. Physical
+weighting uses one hardware-acceleration path and does not require Accessibility
+permission. Gravtail does not install a global event tap, suppress input,
+disconnect the physical device, or call `CGWarpMouseCursorPosition`; native
+clicking, dragging and text I-beam behavior therefore remain under macOS.
 
-When testing a fresh build from a new folder, make sure the exact
-`Gravtail.app` you launched is the enabled entry in this list. macOS can keep
-an older Gravtail entry enabled while treating a newly moved or rebuilt copy
-as a separate accessibility client.
-
-Gravtail never applies its two weighting implementations at the same time:
-the precise software transform is used during active work, and the native-
-cursor HID path is used only during the break countdown so text I-beam hit
-testing remains intact. Both paths preserve at least 10% response; Gravtail
-never intentionally writes zero acceleration. The original HID values are
-backed up before a change and restored after a completed break or normal quit.
+The original HID values are backed up before a change and restored after a
+completed break, reset, sleep, or normal quit. The 10% curve has an absolute
+non-stalling floor and never writes zero acceleration.
 Before the first HID change, Gravtail starts a small independent recovery
 watchdog. If the main app crashes or is force-killed during a break, the
 watchdog restores the saved values automatically. A persistent backup remains
@@ -157,11 +147,11 @@ content, pointer coordinates, or browsing activity—in
 2. 按住 Control 点击 **安装 Gravtail.command**，选择“打开”。
 3. 安装程序会在当前用户的登录钥匙串中创建或复用 `Gravtail Local`，在本机重新签名，并把 App 安装到固定的 Applications 路径。
 4. 安装完成后直接打开 `Gravtail.app`。安装器会先验证下载包和本地签名，再移除 App 的下载隔离标记，因此不再要求第二次按住 Control 打开。
-5. 点击顶部 Gravtail 图标 → **开启鼠标加重…**，在“系统设置 → 隐私与安全性 → 辅助功能”中打开 Gravtail。
+5. 点击顶部 Gravtail 图标，在设置中开启鼠标加重；不需要辅助功能权限。
 
-请始终运行 Release ZIP 里的“安装 Gravtail.command”，不要直接双击 ZIP 内的 `Gravtail.app`。直接打开载荷会使用发布包的签名身份；如果这台 Mac 之前已经授权过另一张本地证书，系统设置仍可能显示 Gravtail 已开启，但当前运行的 App 会被 macOS 判定为未授权。安装器会按已安装 App 的证书指纹重签并保留旧身份，包括早期版本使用的 `Heavy Cursor Local`。
+请始终运行 Release ZIP 里的“安装 Gravtail.command”，不要直接双击 ZIP 内的 `Gravtail.app`。安装器会校验载荷、固定安装路径，并复用本机已有签名身份，包括早期版本使用的 `Heavy Cursor Local`。
 
-私钥只留在这台 Mac，不会上传给项目作者或 GitHub；证书也只被信任用于代码签名。安装脚本不能代替用户授予辅助功能权限。更新时先退出 Gravtail，再运行新版本中的同一个安装脚本；它会复用同一证书、Bundle ID 和安装路径，让 macOS 尽可能把更新识别为同一个 App。不要删除钥匙串中的 `Gravtail Local`。完整说明见 [COMMUNITY_INSTALL.md](COMMUNITY_INSTALL.md)。
+私钥只留在这台 Mac，不会上传给项目作者或 GitHub；证书也只被信任用于代码签名。更新时先退出 Gravtail，再运行新版本中的同一个安装脚本；它会复用同一证书、Bundle ID 和安装路径。完整说明见 [COMMUNITY_INSTALL.md](COMMUNITY_INSTALL.md)。
 
 For a local, non-persistent preview of the full 45-minute effect:
 
@@ -169,10 +159,9 @@ For a local, non-persistent preview of the full 45-minute effect:
 open ".build/Gravtail.app" --args --preview-45
 ```
 
-Preview mode does not automatically open the Accessibility permission prompt.
-If you want to test physical pointer weighting, choose **开启鼠标加重…** from
-the menu-bar icon once, or grant Gravtail access manually
-in System Settings.
+Preview mode does not require Accessibility permission. Enable physical
+weighting once in Gravtail settings if you want the preview to alter hardware
+acceleration.
 
 To preview a 15-minute progress pill without waiting:
 

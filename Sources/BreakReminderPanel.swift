@@ -13,9 +13,12 @@ final class BreakReminderPanel: NSObject {
     private let message = NSTextField(labelWithString: "起身动一下")
     private let countdown = NSTextField(labelWithString: "03:00")
     private let divider = NSBox()
-    private let quitButton = NSButton(title: "退出", target: nil, action: nil)
+    private let skipButton = NSButton(title: "⏭", target: nil, action: nil)
+    private let pauseButton = NSButton(title: "⏸", target: nil, action: nil)
     private var dismissWorkItem: DispatchWorkItem?
-    private var onQuit: (() -> Void)?
+    private var onSkip: (() -> Void)?
+    private var onTogglePause: (() -> Void)?
+    private var isPaused = false
     private var pointerMonitor: Any?
     private(set) var isVisible = false
 
@@ -56,10 +59,16 @@ final class BreakReminderPanel: NSObject {
         }
     }
 
-    func showBreak(remaining: TimeInterval, onQuit: @escaping () -> Void) {
+    func showBreak(
+        remaining: TimeInterval,
+        onSkip: @escaping () -> Void,
+        onTogglePause: @escaping () -> Void
+    ) {
         dismissWorkItem?.cancel()
         dismissWorkItem = nil
-        self.onQuit = onQuit
+        self.onSkip = onSkip
+        self.onTogglePause = onTogglePause
+        isPaused = false
         configureBreakState()
         update(remaining: remaining)
 
@@ -86,15 +95,26 @@ final class BreakReminderPanel: NSObject {
         countdown.stringValue = Self.format(remaining)
     }
 
+    func setPaused(_ paused: Bool, remaining: TimeInterval) {
+        isPaused = paused
+        message.stringValue = paused ? "休息已暂停" : "起身动一下"
+        pauseButton.title = paused ? "▶" : "⏸"
+        pauseButton.setAccessibilityLabel(paused ? "继续休息" : "暂停休息")
+        update(remaining: remaining)
+        fitPanelToContent()
+    }
+
     func showProgress(remaining: TimeInterval) {
         dismissWorkItem?.cancel()
-        onQuit = nil
+        onSkip = nil
+        onTogglePause = nil
         icon.image = NSImage(systemSymbolName: "clock", accessibilityDescription: "距离起身时间")
         icon.contentTintColor = NSColor(srgbRed: 0.98, green: 0.62, blue: 0.28, alpha: 1)
         message.stringValue = "还有 \(max(1, Int(ceil(remaining / 60)))) 分钟 · 起身走走"
         countdown.isHidden = true
         divider.isHidden = true
-        quitButton.isHidden = true
+        skipButton.isHidden = true
+        pauseButton.isHidden = true
         fitPanelToContent()
         presentIfNeeded()
 
@@ -105,13 +125,15 @@ final class BreakReminderPanel: NSObject {
 
     func showRecovered() {
         dismissWorkItem?.cancel()
-        onQuit = nil
+        onSkip = nil
+        onTogglePause = nil
         icon.image = NSImage(systemSymbolName: "checkmark.circle.fill", accessibilityDescription: "鼠标已恢复轻盈")
         icon.contentTintColor = .systemGreen
         message.stringValue = "鼠标已恢复轻盈"
         countdown.isHidden = true
         divider.isHidden = true
-        quitButton.isHidden = true
+        skipButton.isHidden = true
+        pauseButton.isHidden = true
         fitPanelToContent()
         presentIfNeeded(animated: false)
 
@@ -139,8 +161,12 @@ final class BreakReminderPanel: NSObject {
         updatePointerInteraction()
     }
 
-    @objc private func quitPressed() {
-        onQuit?()
+    @objc private func skipPressed() {
+        onSkip?()
+    }
+
+    @objc private func togglePausePressed() {
+        onTogglePause?()
     }
 
     private func configureBreakState() {
@@ -149,7 +175,9 @@ final class BreakReminderPanel: NSObject {
         message.stringValue = "起身动一下"
         countdown.isHidden = false
         divider.isHidden = false
-        quitButton.isHidden = false
+        skipButton.isHidden = false
+        pauseButton.isHidden = false
+        pauseButton.title = isPaused ? "▶" : "⏸"
         fitPanelToContent()
     }
 
@@ -225,14 +253,21 @@ final class BreakReminderPanel: NSObject {
         divider.fillColor = NSColor.white.withAlphaComponent(0.20)
         divider.translatesAutoresizingMaskIntoConstraints = false
 
-        quitButton.target = self
-        quitButton.action = #selector(quitPressed)
-        quitButton.isBordered = false
-        quitButton.font = .systemFont(ofSize: 11, weight: .medium)
-        quitButton.contentTintColor = NSColor.white.withAlphaComponent(0.62)
-        quitButton.setButtonType(.momentaryChange)
+        for button in [skipButton, pauseButton] {
+            button.isBordered = false
+            button.font = .systemFont(ofSize: 13, weight: .medium)
+            button.contentTintColor = NSColor.white.withAlphaComponent(0.72)
+            button.setButtonType(.momentaryChange)
+            button.alignment = .center
+        }
+        skipButton.target = self
+        skipButton.action = #selector(skipPressed)
+        skipButton.setAccessibilityLabel("跳过本次休息")
+        pauseButton.target = self
+        pauseButton.action = #selector(togglePausePressed)
+        pauseButton.setAccessibilityLabel("暂停休息")
 
-        let stack = NSStackView(views: [icon, message, countdown, divider, quitButton])
+        let stack = NSStackView(views: [icon, message, countdown, divider, skipButton, pauseButton])
         stack.orientation = .horizontal
         stack.alignment = .centerY
         stack.spacing = 4
@@ -245,7 +280,8 @@ final class BreakReminderPanel: NSObject {
             countdown.widthAnchor.constraint(equalToConstant: 39),
             divider.widthAnchor.constraint(equalToConstant: 1),
             divider.heightAnchor.constraint(equalToConstant: 13),
-            quitButton.widthAnchor.constraint(equalToConstant: 30),
+            skipButton.widthAnchor.constraint(equalToConstant: 22),
+            pauseButton.widthAnchor.constraint(equalToConstant: 22),
             stack.leadingAnchor.constraint(equalTo: effect.leadingAnchor, constant: 10),
             stack.trailingAnchor.constraint(equalTo: effect.trailingAnchor, constant: -10),
             stack.centerYAnchor.constraint(equalTo: effect.centerYAnchor),
@@ -262,7 +298,8 @@ final class BreakReminderPanel: NSObject {
             (message, max(0, message.intrinsicContentSize.width)),
             (countdown, 39),
             (divider, 1),
-            (quitButton, 30),
+            (skipButton, 22),
+            (pauseButton, 22),
         ]
         let visible = items.filter { !$0.view.isHidden }
         let gaps = max(0, visible.count - 1)

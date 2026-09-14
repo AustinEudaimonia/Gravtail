@@ -3,13 +3,13 @@ import CoreGraphics
 
 enum HeavyCursorConstants {
     static let minimumGain: CGFloat = 0.10
-    /// Do not install a global event tap for imperceptible changes. Keeping
-    /// the tap off until the cursor is meaningfully heavy avoids touching
-    /// pointer events during first-run Accessibility setup.
-    static let pointerTapActivationWeight: CGFloat = 0.05
-    /// At this gain the warp would be effectively identical to the incoming
-    /// cursor position. Skipping it avoids unnecessary cursor re-association.
-    static let pointerWarpGainThreshold: CGFloat = 0.995
+    /// Never write an acceleration value so small that ordinary one-pixel
+    /// device movement feels indistinguishable from a frozen cursor.
+    static let minimumHardwareAcceleration: Double = 0.10
+    /// The break is deliberately heavier than the work phase, but still stays
+    /// above zero so WindowServer keeps receiving native pointer movement.
+    static let breakMinimumHardwareAcceleration: Double = 0.05
+    static let physicalWeightActivationThreshold: CGFloat = 0.05
 }
 
 enum MaintenancePolicy {
@@ -24,33 +24,44 @@ enum MaintenancePolicy {
     }
 }
 
+enum MenuBarFallbackPolicy {
+    /// A fallback launcher is allowed only when the menu bar itself is
+    /// present and macOS did not give the native status item a real window.
+    /// A hidden menu bar must remain hidden instead of being bypassed by an
+    /// always-on-top panel.
+    static let minimumMenuBarHeight: CGFloat = 18
+
+    static func shouldUseFallback(
+        menuBarHeight: CGFloat,
+        nativeWindowHeight: CGFloat?,
+        nativeWindowOnScreen: Bool = true,
+        nativeButtonClipped: Bool = false
+    ) -> Bool {
+        guard menuBarHeight >= minimumMenuBarHeight else { return false }
+        guard let nativeWindowHeight else { return true }
+        return nativeWindowHeight < minimumMenuBarHeight || !nativeWindowOnScreen || nativeButtonClipped
+    }
+}
+
 enum CursorWeightingMode: Equatable {
     case none
-    case software
     case hardware
 }
 
 enum CursorWeightingPolicy {
-    /// Exactly one pointer-weighting implementation may own cursor movement
-    /// at a time. Applying the event-tap gain and HID acceleration together
-    /// compounds the two curves and can reduce the effective movement to
-    /// zero. The break uses only HID so AppKit retains native cursor shapes;
-    /// active work uses only the more precise event-tap transform.
+    /// Physical weighting uses only the system acceleration setting. Gravtail
+    /// never intercepts, suppresses, disconnects, or warps pointer events.
+    /// Unsupported devices therefore fail open to native cursor behavior.
     static func mode(
         isUIPreview: Bool,
-        isOnBreak: Bool,
-        isAccessibilityTrusted: Bool,
         weight: CGFloat,
         isPhysicalWeightingEnabled: Bool
     ) -> CursorWeightingMode {
         guard isPhysicalWeightingEnabled, !isUIPreview,
-              weight > HeavyCursorConstants.pointerTapActivationWeight else {
+              weight > HeavyCursorConstants.physicalWeightActivationThreshold else {
             return .none
         }
-        if isOnBreak {
-            return .hardware
-        }
-        return isAccessibilityTrusted ? .software : .none
+        return .hardware
     }
 }
 
@@ -67,8 +78,8 @@ enum ReminderSchedule {
 
 enum RecoveryNoticePolicy {
     static func shouldShow(pending: Bool, hardwareRestored: Bool, hardwareActive: Bool,
-                           softwareActive: Bool, watchdogRunning: Bool) -> Bool {
-        pending && hardwareRestored && !hardwareActive && !softwareActive && !watchdogRunning
+                           watchdogRunning: Bool) -> Bool {
+        pending && hardwareRestored && !hardwareActive && !watchdogRunning
     }
 }
 
@@ -88,16 +99,21 @@ enum WeightCurve {
         return 1 - (1 - HeavyCursorConstants.minimumGain) * clamped * clamped
     }
 
-    /// The HID path is used only during the break, never together with the
-    /// software event tap. Reusing the same bounded curve guarantees the
-    /// hardware acceleration value cannot be reduced to zero.
+    /// The single HID path reuses the bounded curve so acceleration can never
+    /// be reduced to zero.
     static func hardwareScale(for weight: CGFloat) -> CGFloat {
         pointerGain(for: weight)
     }
 
-    static func hardwareAccelerationTarget(original: Double, weight: CGFloat) -> Double? {
-        guard original.isFinite, original > 0 else { return nil }
-        return original * Double(hardwareScale(for: weight))
+    static func hardwareAccelerationTarget(
+        original: Double,
+        weight: CGFloat,
+        minimumAcceleration: Double = HeavyCursorConstants.minimumHardwareAcceleration
+    ) -> Double? {
+        guard original.isFinite, original > 0,
+              minimumAcceleration.isFinite, minimumAcceleration > 0 else { return nil }
+        let scaled = original * Double(hardwareScale(for: weight))
+        return min(original, max(minimumAcceleration, scaled))
     }
 
     /// The comet is the app's always-visible heartbeat once a real work
@@ -114,8 +130,15 @@ enum WeightCurve {
 final class SessionClock {
     private(set) var elapsed: TimeInterval = 0
     private(set) var isAway = false
+    private(set) var isPaused = false
     private var lastTick: TimeInterval?
     private var dueSince: TimeInterval?
+    private var pausedBreakRemaining: TimeInterval?
+    private var ignoredBreakInputAt: TimeInterval?
+
+    // Logic ticks run every 250 ms; allow one second for the resume click's
+    // HID timestamp to settle before treating a later input as real movement.
+    private static let controlInputTolerance: TimeInterval = 1.0
 
     var interval: TimeInterval
     var breakDuration: TimeInterval
@@ -131,12 +154,21 @@ final class SessionClock {
     func reset(startingAt now: TimeInterval? = nil) {
         elapsed = 0
         isAway = false
+        isPaused = false
         dueSince = nil
+        pausedBreakRemaining = nil
+        ignoredBreakInputAt = nil
         lastTick = now
     }
 
     @discardableResult
     func tick(now: TimeInterval, idleTime: TimeInterval) -> Bool {
+        if isPaused {
+            // Keep the resume anchor current while paused so the elapsed time
+            // before the pause cannot leak into the next tick.
+            lastTick = now
+            return false
+        }
         // A newly launched or reset session is intentionally idle until the
         // app observes a real physical input. This prevents time spent on the
         // login screen, desktop, or an already-open notification from being
@@ -156,8 +188,11 @@ final class SessionClock {
         // not at the last input before it. This prevents idle time accumulated
         // while reading just before the deadline from shortening the break.
         if let dueSince {
-            let lastInputAt = now - max(0, idleTime)
-            let breakStartedAt = max(dueSince, lastInputAt)
+            let breakStartedAt = effectiveBreakStart(
+                dueSince: dueSince,
+                now: now,
+                idleTime: idleTime
+            )
             if now - breakStartedAt >= breakDuration {
                 let newlyRecovered = !isAway && elapsed > 0
                 elapsed = 0
@@ -181,6 +216,35 @@ final class SessionClock {
             dueSince = previous + timeToDeadline
         }
         return false
+    }
+
+    /// Pause only the active break. The countdown is frozen and the caller
+    /// can restore any physical weighting before presenting a resume control.
+    @discardableResult
+    func pause(now: TimeInterval, idleTime: TimeInterval) -> Bool {
+        guard isOnBreak, !isPaused else { return false }
+        pausedBreakRemaining = breakRemaining(now: now, idleTime: idleTime)
+        isPaused = true
+        lastTick = now
+        return true
+    }
+
+    /// Resume a paused break without charging the paused wall-clock time.
+    @discardableResult
+    func resume(now: TimeInterval) -> Bool {
+        guard isPaused else { return false }
+        if let pausedBreakRemaining {
+            let elapsedBreak = max(0, breakDuration - pausedBreakRemaining)
+            dueSince = now - elapsedBreak
+        }
+        pausedBreakRemaining = nil
+        // The click that resumes the pill is a control action, not a reason
+        // to restart the user's break. Ignore that one sampled HID timestamp;
+        // a later real movement still resets the break as usual.
+        ignoredBreakInputAt = now
+        isPaused = false
+        lastTick = now
+        return true
     }
 
     /// Used by the local preview launcher to demonstrate a completed work
@@ -222,11 +286,32 @@ final class SessionClock {
     }
 
     func breakRemaining(now: TimeInterval, idleTime: TimeInterval) -> TimeInterval {
+        if isPaused, let pausedBreakRemaining {
+            return pausedBreakRemaining
+        }
         guard let dueSince else {
             return max(0, breakDuration - idleTime)
         }
-        let lastInputAt = now - max(0, idleTime)
-        let breakStartedAt = max(dueSince, lastInputAt)
+        let breakStartedAt = effectiveBreakStart(
+            dueSince: dueSince,
+            now: now,
+            idleTime: idleTime
+        )
         return max(0, breakDuration - (now - breakStartedAt))
+    }
+
+    private func effectiveBreakStart(
+        dueSince: TimeInterval,
+        now: TimeInterval,
+        idleTime: TimeInterval
+    ) -> TimeInterval {
+        let lastInputAt = now - max(0, idleTime)
+        if let ignoredBreakInputAt {
+            if lastInputAt <= ignoredBreakInputAt + Self.controlInputTolerance {
+                return dueSince
+            }
+            self.ignoredBreakInputAt = nil
+        }
+        return max(dueSince, lastInputAt)
     }
 }
