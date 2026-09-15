@@ -1,5 +1,12 @@
 import Cocoa
 
+enum ReminderWindowLevelPolicy {
+    // One level below screen-saver windows: above ordinary, floating, modal,
+    // and full-screen app windows, without claiming the system's own highest
+    // security/screen-lock tier.
+    static let level = NSWindow.Level(rawValue: NSWindow.Level.screenSaver.rawValue - 1)
+}
+
 private final class ReminderNSPanel: NSPanel {
     override var canBecomeKey: Bool {
         ProcessInfo.processInfo.arguments.contains("--preview-ui")
@@ -20,6 +27,8 @@ final class BreakReminderPanel: NSObject {
     private var onTogglePause: (() -> Void)?
     private var isPaused = false
     private var pointerMonitor: Any?
+    private var keepOnTopTimer: Timer?
+    private var visibilityObservers: [NSObjectProtocol] = []
     private(set) var isVisible = false
 
     override init() {
@@ -35,9 +44,12 @@ final class BreakReminderPanel: NSObject {
         panel.setAccessibilityTitle("休息提醒")
         panel.backgroundColor = .clear
         panel.hasShadow = false
-        // Keep the reminder above ordinary app windows without covering
-        // password, permission, or other system-security dialogs.
-        panel.level = .floating
+        // The reminder sits just below the system's screen-saver tier, so
+        // full-screen and floating app windows cannot cover it. It remains
+        // non-activating and click-through outside its controls, so this
+        // stronger z-order does not interfere with typing or native pointer
+        // input.
+        panel.level = ReminderWindowLevelPolicy.level
         // Stay click-through unless the pointer is actually over the pill.
         // This prevents the reminder from stealing focus from a text field
         // underneath it while preserving a clickable Quit button.
@@ -48,6 +60,7 @@ final class BreakReminderPanel: NSObject {
         panel.isReleasedWhenClosed = false
         panel.alphaValue = 0
         panel.contentView = makeContentView()
+        installVisibilityObservers()
         pointerMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved]) { [weak self] _ in
             self?.updatePointerInteraction()
         }
@@ -57,6 +70,9 @@ final class BreakReminderPanel: NSObject {
         if let pointerMonitor {
             NSEvent.removeMonitor(pointerMonitor)
         }
+        keepOnTopTimer?.invalidate()
+        visibilityObservers.forEach { NotificationCenter.default.removeObserver($0) }
+        visibilityObservers.forEach { NSWorkspace.shared.notificationCenter.removeObserver($0) }
     }
 
     func showBreak(
@@ -72,10 +88,14 @@ final class BreakReminderPanel: NSObject {
         configureBreakState()
         update(remaining: remaining)
 
-        guard !isVisible else { return }
+        guard !isVisible else {
+            reassertOnTopIfNeeded()
+            return
+        }
         isVisible = true
         positionPanel()
         updatePointerInteraction()
+        startKeepOnTopMonitoring()
         if ProcessInfo.processInfo.arguments.contains("--preview-ui") {
             NSApp.activate(ignoringOtherApps: true)
             panel.makeKeyAndOrderFront(nil)
@@ -102,6 +122,7 @@ final class BreakReminderPanel: NSObject {
         pauseButton.setAccessibilityLabel(paused ? "继续休息" : "暂停休息")
         update(remaining: remaining)
         fitPanelToContent()
+        reassertOnTopIfNeeded()
     }
 
     func showProgress(remaining: TimeInterval) {
@@ -148,6 +169,8 @@ final class BreakReminderPanel: NSObject {
         guard isVisible else { return }
         isVisible = false
         panel.ignoresMouseEvents = true
+        keepOnTopTimer?.invalidate()
+        keepOnTopTimer = nil
 
         // Hide synchronously: a delayed fade-out completion could otherwise
         // order out the recovery notice that replaces this pill in the same tick.
@@ -159,6 +182,7 @@ final class BreakReminderPanel: NSObject {
         guard isVisible else { return }
         panel.setFrameOrigin(restingOrigin())
         updatePointerInteraction()
+        reassertOnTopIfNeeded()
     }
 
     @objc private func skipPressed() {
@@ -182,10 +206,14 @@ final class BreakReminderPanel: NSObject {
     }
 
     private func presentIfNeeded(animated: Bool = true) {
-        guard !isVisible else { return }
+        guard !isVisible else {
+            reassertOnTopIfNeeded()
+            return
+        }
         isVisible = true
         positionPanel()
         updatePointerInteraction()
+        startKeepOnTopMonitoring()
         if ProcessInfo.processInfo.arguments.contains("--preview-ui") {
             NSApp.activate(ignoringOtherApps: true)
             panel.makeKeyAndOrderFront(nil)
@@ -209,6 +237,59 @@ final class BreakReminderPanel: NSObject {
     private func positionPanel() {
         let origin = restingOrigin()
         panel.setFrameOrigin(NSPoint(x: origin.x, y: origin.y - 6))
+    }
+
+    /// Keep the pill above another app that activates a floating or full
+    /// screen window. Reasserting at a low cadence avoids fighting WindowServer
+    /// on every countdown tick while still recovering within a fraction of a
+    /// second after a z-order change.
+    private func startKeepOnTopMonitoring() {
+        guard keepOnTopTimer == nil else {
+            reassertOnTopIfNeeded()
+            return
+        }
+        let timer = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in
+            self?.reassertOnTopIfNeeded()
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        keepOnTopTimer = timer
+        reassertOnTopIfNeeded()
+    }
+
+    private func reassertOnTopIfNeeded() {
+        guard isVisible else { return }
+        panel.level = ReminderWindowLevelPolicy.level
+        panel.orderFrontRegardless()
+    }
+
+    private func installVisibilityObservers() {
+        let center = NotificationCenter.default
+        for name in [
+            NSApplication.didBecomeActiveNotification,
+            NSApplication.didResignActiveNotification,
+        ] {
+            visibilityObservers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                self?.reassertOnTopIfNeeded()
+            })
+        }
+        visibilityObservers.append(
+            center.addObserver(
+                forName: NSWindow.didChangeOcclusionStateNotification,
+                object: panel,
+                queue: .main
+            ) { [weak self] _ in
+                self?.reassertOnTopIfNeeded()
+            }
+        )
+        visibilityObservers.append(
+            NSWorkspace.shared.notificationCenter.addObserver(
+                forName: NSWorkspace.activeSpaceDidChangeNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                self?.reassertOnTopIfNeeded()
+            }
+        )
     }
 
     private func updatePointerInteraction() {

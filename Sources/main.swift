@@ -23,6 +23,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let breakReminder = BreakReminderPanel()
     private let reminderSoundPlayer = ReminderSoundPlayer()
     private let hidRecoveryWatchdog = RecoveryWatchdog()
+    private var restoreBackoff = RestoreBackoff()
     private var sessionSafetyDisabled = false
     private var pendingRecoveryNotice = false
     private var settingsWindow: NSWindow?
@@ -199,12 +200,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @discardableResult
     private func restoreHardware() -> Bool {
         guard let controller = hidAccelerationControllerStorage else { return true }
+        let restored: Bool
         if controller.restore() {
-            return stopHIDRecoveryWatchdog()
+            restored = stopHIDRecoveryWatchdog()
         } else {
             DiagnosticLog.shared.record("hid-restore-deferred-to-watchdog")
-            return false
+            restored = false
         }
+        if restored {
+            restoreBackoff.reset()
+        } else {
+            restoreBackoff.recordFailure(now: ProcessInfo.processInfo.systemUptime)
+        }
+        return restored
+    }
+
+    private func restoreHardwareIfDue(now: TimeInterval) -> Bool {
+        guard restoreBackoff.shouldAttempt(now: now) else { return false }
+        return restoreHardware()
     }
 
     /// Start an independent copy of the executable before the first HID write.
@@ -347,6 +360,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func logicTick() {
+        let now = ProcessInfo.processInfo.systemUptime
         if hidAccelerationController.isActive && !hidRecoveryWatchdog.pulse() {
             // A stalled loop, dead child or broken IPC ends physical weighting
             // until the user explicitly resets. Never spawn a replacement that
@@ -360,7 +374,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // and have it immediately mark the break as completed, hiding the
         // very heavy pointer effect the preview is meant to demonstrate.
         let idleTime = isAnyPreview ? 0 : currentIdleTime()
-        let now = ProcessInfo.processInfo.systemUptime
         if !isAnyPreview && !isShowingOnboarding && !hasStartedWorkSession {
             if hasPhysicalInputSinceBaseline(now: now, idleTime: idleTime) {
                 hasStartedWorkSession = true
@@ -427,9 +440,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         switch weightingMode {
         case .hardware:
             if hidAccelerationController.isSafetyDisabled {
-                if hidAccelerationController.restore() {
-                    stopHIDRecoveryWatchdog()
-                }
+                _ = restoreHardwareIfDue(now: now)
             } else {
                 let minimumAcceleration = clock.isOnBreak
                     ? HeavyCursorConstants.breakMinimumHardwareAcceleration
@@ -440,9 +451,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 )
             }
         case .none:
-            if hidAccelerationController.restore() {
-                stopHIDRecoveryWatchdog()
-            }
+            _ = restoreHardwareIfDue(now: now)
         }
 
         if RecoveryNoticePolicy.shouldShow(pending: pendingRecoveryNotice,
@@ -644,9 +653,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func evaluateMenuBarEntry() {
         guard !isUIPreview,
-              fallbackProductIconPanel == nil,
-              let item = statusItem,
               let screen = NSScreen.main ?? NSScreen.screens.first else { return }
+
+        // A fallback can be created while the native status item is still
+        // waiting for WindowServer layout. Re-probe the native owner after a
+        // display/full-screen transition, so the fallback cannot become a
+        // permanent second icon or remain in a stale position.
+        if let fallback = fallbackProductIconPanel {
+            let menuBarHeight = screen.frame.maxY - screen.visibleFrame.maxY
+            let shouldReprobe = MenuBarFallbackPolicy.shouldReprobeNative(
+                hasFallback: true,
+                menuBarHeight: menuBarHeight
+            )
+            if shouldReprobe || menuBarHeight < MenuBarFallbackPolicy.minimumMenuBarHeight {
+                fallback.orderOut(nil)
+                fallbackProductIconPanel = nil
+                // Keep the menu bar hidden when macOS hides it; restore the
+                // native owner so it can become visible again when the bar
+                // returns.
+                setUpMenuBarIcon()
+                // Give WindowServer time to attach the status item before
+                // measuring its backing window. Evaluating immediately here
+                // would see a transient nil/zero frame and recreate the
+                // fallback we just removed.
+                scheduleMenuBarFallbackCheck()
+                return
+            }
+        }
+
+        guard let item = statusItem else { return }
 
         let menuBarHeight = screen.frame.maxY - screen.visibleFrame.maxY
         let nativeWindowHeight = item.button?.window?.frame.height

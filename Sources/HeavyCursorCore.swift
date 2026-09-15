@@ -24,6 +24,38 @@ enum MaintenancePolicy {
     }
 }
 
+/// Throttle synchronous HID restoration after a device or WindowServer error.
+/// A failed write must not turn the 250 ms logic loop into a tight retry loop
+/// on the main thread, while a successful restore should be immediately
+/// eligible again for the next safety transition.
+struct RestoreBackoff {
+    private static let initialDelay: TimeInterval = 1
+    private static let maximumDelay: TimeInterval = 30
+    private(set) var failureCount = 0
+    private(set) var nextAttemptAt: TimeInterval = 0
+
+    func shouldAttempt(now: TimeInterval) -> Bool {
+        now.isFinite && now >= nextAttemptAt
+    }
+
+    mutating func recordFailure(now: TimeInterval) {
+        guard now.isFinite else { return }
+        failureCount = min(6, failureCount + 1)
+        var delay = Self.initialDelay
+        if failureCount > 1 {
+            for _ in 1..<failureCount {
+                delay = min(Self.maximumDelay, delay * 2)
+            }
+        }
+        nextAttemptAt = now + delay
+    }
+
+    mutating func reset() {
+        failureCount = 0
+        nextAttemptAt = 0
+    }
+}
+
 enum MenuBarFallbackPolicy {
     /// A fallback launcher is allowed only when the menu bar itself is
     /// present and macOS did not give the native status item a real window.
@@ -40,6 +72,10 @@ enum MenuBarFallbackPolicy {
         guard menuBarHeight >= minimumMenuBarHeight else { return false }
         guard let nativeWindowHeight else { return true }
         return nativeWindowHeight < minimumMenuBarHeight || !nativeWindowOnScreen || nativeButtonClipped
+    }
+
+    static func shouldReprobeNative(hasFallback: Bool, menuBarHeight: CGFloat) -> Bool {
+        hasFallback && menuBarHeight >= minimumMenuBarHeight
     }
 }
 

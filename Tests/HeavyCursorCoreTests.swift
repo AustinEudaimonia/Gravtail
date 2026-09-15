@@ -20,6 +20,30 @@ enum HeavyCursorCoreTests {
         expect(WeightCurve.visualWeight(elapsed: 0, interval: interval) >= 0.16, "started session has a visible comet immediately")
         expect(WeightCurve.visualWeight(elapsed: interval, interval: interval) == 1, "deadline keeps the comet at full strength")
 
+        var restoreBackoff = RestoreBackoff()
+        expect(restoreBackoff.shouldAttempt(now: 100), "restore is immediately eligible")
+        restoreBackoff.recordFailure(now: 100)
+        expect(!restoreBackoff.shouldAttempt(now: 100.5), "first restore failure is throttled")
+        expect(restoreBackoff.shouldAttempt(now: 101), "first restore retry waits one second")
+        restoreBackoff.recordFailure(now: 101)
+        expect(!restoreBackoff.shouldAttempt(now: 102.9), "second restore failure uses exponential backoff")
+        expect(restoreBackoff.shouldAttempt(now: 103), "second restore retry waits two seconds")
+        restoreBackoff.reset()
+        expect(restoreBackoff.shouldAttempt(now: 103), "successful restore clears the backoff")
+
+        expect(
+            MenuBarFallbackPolicy.shouldReprobeNative(hasFallback: true, menuBarHeight: 22),
+            "a visible fallback should be rechecked after display changes"
+        )
+        expect(
+            !MenuBarFallbackPolicy.shouldReprobeNative(hasFallback: false, menuBarHeight: 22),
+            "native ownership should not be probed when no fallback exists"
+        )
+        expect(
+            !MenuBarFallbackPolicy.shouldReprobeNative(hasFallback: true, menuBarHeight: 0),
+            "a hidden menu bar must not create a visible fallback"
+        )
+
         let breakClock = SessionClock(interval: 60, breakDuration: 300)
         breakClock.reset(startingAt: 0)
         _ = breakClock.tick(now: 60, idleTime: 0)
