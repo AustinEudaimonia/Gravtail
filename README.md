@@ -16,7 +16,7 @@
   <a href="https://github.com/AustinEudaimonia/Gravtail/issues">反馈问题</a>
 </p>
 
-Gravtail 是一个轻量的 macOS 菜单栏应用。它不靠突然弹出的系统通知打断你，而是把“久坐时间”变成光标本身的环境反馈：使用电脑越久，光标后的 comet（彗尾）越长、越粗；只有最后 10 分钟鼠标才开始从原生灵敏度平滑降到 50%，到达起身时间时再突然降到 10%；起身离开一段时间后，光标恢复轻盈。
+Gravtail 是一个轻量的 macOS 菜单栏应用。它不靠突然弹出的系统通知打断你，而是把“久坐时间”变成光标本身的环境反馈：使用电脑越久，光标后的 comet（彗尾）越长、越粗，但工作阶段会保持克制的视觉强度；只有最后 10 分钟鼠标才开始从原生灵敏度平滑降到 50%，到达起身时间时再突然降到 10%，同时彗尾进入满强度；起身离开一段时间后，光标恢复轻盈。
 
 它不是一个更复杂的生产力面板，也不是一套打卡系统。它只做一件事：在你忘记起身之前，让正在使用的鼠标先告诉你。
 
@@ -25,8 +25,8 @@ Gravtail 是一个轻量的 macOS 菜单栏应用。它不靠突然弹出的系�
 | 你连续使用电脑的时间 | 你会看到什么 | 鼠标会发生什么 |
 | --- | --- | --- |
 | 前半段 | 一条几乎看不见的 comet | 保持正常 |
-| 最后 10 分钟 | 彗尾逐渐变长、变粗、变重 | 灵敏度从 100% 平滑降到 50% |
-| 到达设定时间 | 顶部出现“起身动一下” | 灵敏度瞬间降到 10% |
+| 最后 10 分钟 | 彗尾逐渐变长、变粗，但强度保持克制 | 灵敏度从 100% 平滑降到 50% |
+| 到达设定时间 | 顶部出现“起身动一下”，彗尾开满 | 灵敏度瞬间降到 10% |
 | 完成休息 | 彗尾消失，出现恢复提示 | 恢复原始设置 |
 
 默认支持 **45 / 60 / 90 分钟**工作时长和 **3 / 5 / 10 分钟**休息时长。最重状态沿用约 10% 的加重曲线，同时设置绝对安全下限；鼠标始终由 macOS 原生事件系统控制，不会被 Gravtail 拦截、重定位或阻止文本输入。
@@ -45,8 +45,8 @@ Gravtail 是一个轻量的 macOS 菜单栏应用。它不靠突然弹出的系�
 | --- | --- | --- |
 | 前半段 | 第一次真实输入后显示很轻的 comet | 保持原始灵敏度 |
 | 前段与中段 | comet 持续提供轻量反馈 | 保持原始灵敏度 |
-| 最后 10 分钟 | comet 平滑变长、变粗，颜色逐渐变暖 | 从 100% 平滑降到 50% |
-| 达到设定时间 | 顶部居中的小胶囊提示起身，comet 保持最强 | 瞬间降到 10%，并保留安全响应下限 |
+| 最后 10 分钟 | comet 平滑变长、变粗，颜色逐渐变暖，但视觉强度上限约 65% | 从 100% 平滑降到 50% |
+| 达到设定时间 | 顶部居中的小胶囊提示起身，comet 开到 100% | 瞬间降到 10%，并保留安全响应下限 |
 | 完成休息 | 清除 comet；确认恢复后显示完成提示 | 立即尝试恢复本轮加重前保存的原始设置 |
 
 你可以选择 **45 / 60 / 90 分钟**的连续使用时间，以及 **3 / 5 / 10 分钟**的休息时长。应用启动或重置后，会等到第一次真实的键盘/鼠标输入才开始计时；工作阶段不会因为几分钟没有输入而自动把本轮归零。每 15 分钟，屏幕上方会出现一个短暂的小胶囊，告诉你距离起身还剩多久；到点后胶囊会显示休息倒计时。休息阶段的键盘或鼠标输入会重新开始休息倒计时，完整休息后进入下一轮。
@@ -87,7 +87,7 @@ A deliberately small macOS menu bar app: the longer you use your Mac, the heavie
 - Choose a 45, 60, or 90 minute work interval.
 - Choose a 3, 5, or 10 minute break duration.
 - After the first physical input, a subtle comet confirms that Gravtail is running while physical pointer response stays unchanged during the first half.
-- During the final ten minutes, pointer response eases from native sensitivity to 50%; when the break begins it switches immediately to 10%.
+- During the final ten minutes, the comet grows within a restrained 65% visual ceiling while pointer response eases from native sensitivity to 50%; when the break begins, the pointer switches immediately to 10% and the comet reaches full strength.
 - Every 15 minutes, a four-second pill reports how long remains before it is time to move.
 - Progress pills, break start, and break completion each play one short built-in macOS sound; sounds can be disabled without removing the visual reminders.
 - At the selected limit, the pill stays visible with a live break countdown and Quit action.

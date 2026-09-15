@@ -17,7 +17,16 @@ enum HeavyCursorCoreTests {
         expect(abs(WeightCurve.weight(elapsed: 45 * 60, interval: interval) - 0.5) < 0.001, "three quarters is half weight")
         expect(WeightCurve.weight(elapsed: interval, interval: interval) == 1, "deadline reaches full weight")
         expect(abs(WeightCurve.pointerGain(for: 1) - 0.10) < 0.001, "full weight caps at 10 percent gain")
-        expect(WeightCurve.visualWeight(elapsed: 0, interval: interval) >= 0.16, "started session has a visible comet immediately")
+        expect(WeightCurve.visualWeight(elapsed: 0, interval: interval) >= 0.12, "started session has a visible comet immediately")
+        expect(
+            WeightCurve.workVisualMaximum < 1,
+            "work comet intensity stays below full strength"
+        )
+        expect(
+            WeightCurve.visualWeight(elapsed: interval - 1, interval: interval)
+                <= WeightCurve.workVisualMaximum + 0.001,
+            "work comet stays within the reduced visual ceiling"
+        )
         expect(WeightCurve.visualWeight(elapsed: interval, interval: interval) == 1, "deadline keeps the comet at full strength")
 
         let rampDuration: TimeInterval = 10 * 60

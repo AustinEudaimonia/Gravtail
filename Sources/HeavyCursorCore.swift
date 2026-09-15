@@ -172,6 +172,10 @@ enum RecoveryNoticePolicy {
 }
 
 enum WeightCurve {
+    /// Keep the work-phase comet present but understated. The break is the
+    /// only state that is allowed to render at full visual strength.
+    static let workVisualMaximum: CGFloat = 0.65
+
     /// The first half of a session stays visually quiet. The second half eases
     /// continuously from weightless to fully heavy.
     static func weight(elapsed: TimeInterval, interval: TimeInterval) -> CGFloat {
@@ -255,10 +259,15 @@ enum WeightCurve {
     /// the deadline approaches; this visual curve is intentionally independent
     /// from the physical sensitivity timeline.
     static func visualWeight(elapsed: TimeInterval, interval: TimeInterval) -> CGFloat {
-        guard interval > 0 else { return 0 }
+        guard interval.isFinite, interval > 0, elapsed.isFinite else { return 0 }
         let progress = CGFloat(max(0, min(1, elapsed / interval)))
-        let ambientComet = 0.16 + 0.08 * progress
-        return max(ambientComet, weight(elapsed: elapsed, interval: interval))
+        // A completed work interval is the break state, whose full comet is
+        // intentionally preserved. Before that boundary, cap the comet so it
+        // does not compete with the user's work even as the deadline nears.
+        guard progress < 1 else { return 1 }
+        let ambientComet = 0.12 + 0.08 * progress
+        let weightedComet = workVisualMaximum * weight(elapsed: elapsed, interval: interval)
+        return max(ambientComet, min(workVisualMaximum, weightedComet))
     }
 }
 

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Keep the work-phase comet visually restrained with a 65% ceiling while
+  preserving full visual strength during the break.
 - Change physical weighting to a clear two-stage transition: native response
   until the final ten minutes, a smooth 100% to 50% work ramp, then an
   immediate 10% sensitivity switch when the break starts.
