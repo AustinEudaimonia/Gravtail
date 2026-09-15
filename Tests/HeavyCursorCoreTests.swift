@@ -20,6 +20,75 @@ enum HeavyCursorCoreTests {
         expect(WeightCurve.visualWeight(elapsed: 0, interval: interval) >= 0.16, "started session has a visible comet immediately")
         expect(WeightCurve.visualWeight(elapsed: interval, interval: interval) == 1, "deadline keeps the comet at full strength")
 
+        let rampDuration: TimeInterval = 10 * 60
+        expect(
+            abs(WeightCurve.workSensitivity(
+                elapsed: 0, interval: interval, rampDuration: rampDuration
+            ) - 1) < 0.001,
+            "work starts at native sensitivity"
+        )
+        expect(
+            abs(WeightCurve.workSensitivity(
+                elapsed: interval - rampDuration - 1,
+                interval: interval,
+                rampDuration: rampDuration
+            ) - 1) < 0.001,
+            "the first part of work stays at native sensitivity"
+        )
+        expect(
+            abs(WeightCurve.workSensitivity(
+                elapsed: interval - rampDuration,
+                interval: interval,
+                rampDuration: rampDuration
+            ) - 1) < 0.001,
+            "the final ramp starts at native sensitivity"
+        )
+        expect(
+            abs(WeightCurve.workSensitivity(
+                elapsed: interval - rampDuration / 2,
+                interval: interval,
+                rampDuration: rampDuration
+            ) - 0.75) < 0.001,
+            "the middle of the final ramp is halfway between native and fifty percent"
+        )
+        expect(
+            abs(WeightCurve.workSensitivity(
+                elapsed: interval, interval: interval, rampDuration: rampDuration
+            ) - 0.50) < 0.001,
+            "work ends at fifty percent sensitivity"
+        )
+        expect(
+            abs(WeightCurve.hardwareAccelerationTarget(
+                original: 2,
+                sensitivity: 0.5
+            )! - 1) < 0.001,
+            "hardware target applies the explicit work sensitivity"
+        )
+        expect(
+            abs(WeightCurve.hardwareAccelerationTarget(
+                original: 2,
+                sensitivity: HeavyCursorConstants.breakSensitivity,
+                minimumAcceleration: HeavyCursorConstants.breakMinimumHardwareAcceleration
+            )! - 0.2) < 0.001,
+            "break target applies a hard ten-percent sensitivity"
+        )
+        expect(
+            CursorWeightingPolicy.mode(
+                isUIPreview: false,
+                sensitivity: 1,
+                isPhysicalWeightingEnabled: true
+            ) == .none,
+            "native sensitivity does not activate the HID path"
+        )
+        expect(
+            CursorWeightingPolicy.mode(
+                isUIPreview: false,
+                sensitivity: 0.5,
+                isPhysicalWeightingEnabled: true
+            ) == .hardware,
+            "the final work ramp activates the HID path"
+        )
+
         var restoreBackoff = RestoreBackoff()
         expect(restoreBackoff.shouldAttempt(now: 100), "restore is immediately eligible")
         restoreBackoff.recordFailure(now: 100)

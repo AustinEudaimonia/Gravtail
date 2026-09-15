@@ -3,6 +3,13 @@ import CoreGraphics
 
 enum HeavyCursorConstants {
     static let minimumGain: CGFloat = 0.10
+    /// Physical weighting stays native until the final ten minutes, then
+    /// eases down only to half sensitivity before the break begins.
+    static let workSensitivityFloor: CGFloat = 0.50
+    static let workSensitivityRampDuration: TimeInterval = 10 * 60
+    /// The break is a deliberate, immediate contrast with the work phase.
+    static let breakSensitivity: CGFloat = 0.10
+    static let sensitivityActivationThreshold: CGFloat = 0.999
     /// Never write an acceleration value so small that ordinary one-pixel
     /// device movement feels indistinguishable from a frozen cursor.
     static let minimumHardwareAcceleration: Double = 0.10
@@ -108,6 +115,23 @@ enum CursorWeightingPolicy {
         }
         return .hardware
     }
+
+    /// Select the HID path only when the explicit sensitivity curve actually
+    /// asks for a change. Keeping native sensitivity as `.none` avoids a
+    /// needless HID write during the long, unweighted part of a session.
+    static func mode(
+        isUIPreview: Bool,
+        sensitivity: CGFloat,
+        isPhysicalWeightingEnabled: Bool
+    ) -> CursorWeightingMode {
+        guard isPhysicalWeightingEnabled, !isUIPreview,
+              sensitivity.isFinite,
+              sensitivity > 0,
+              sensitivity < HeavyCursorConstants.sensitivityActivationThreshold else {
+            return .none
+        }
+        return .hardware
+    }
 }
 
 enum ReminderSchedule {
@@ -169,6 +193,52 @@ enum WeightCurve {
         pointerGain(for: weight)
     }
 
+    /// Returns the physical pointer sensitivity for the work phase. The
+    /// cursor remains completely native until the final ramp, then follows a
+    /// smoothstep curve from 100% to the configured 50% floor. This is kept
+    /// separate from `weight` so the comet can remain expressive without
+    /// making the pointer heavy for most of the session.
+    static func workSensitivity(
+        elapsed: TimeInterval,
+        interval: TimeInterval,
+        rampDuration: TimeInterval = HeavyCursorConstants.workSensitivityRampDuration,
+        minimumSensitivity: CGFloat = HeavyCursorConstants.workSensitivityFloor
+    ) -> CGFloat {
+        guard interval.isFinite, interval > 0,
+              elapsed.isFinite,
+              rampDuration.isFinite,
+              minimumSensitivity.isFinite else { return 1 }
+
+        let minimum = max(0, min(1, minimumSensitivity))
+        let elapsedClamped = max(0, min(interval, elapsed))
+        let ramp = max(0, min(interval, rampDuration))
+        guard ramp > 0 else {
+            return elapsedClamped >= interval ? minimum : 1
+        }
+
+        let rampStart = interval - ramp
+        guard elapsedClamped > rampStart else { return 1 }
+        let progress = max(0, min(1, (elapsedClamped - rampStart) / ramp))
+        let eased = progress * progress * (3 - 2 * progress)
+        return 1 - (1 - minimum) * CGFloat(eased)
+    }
+
+    /// Convert an explicit sensitivity percentage into a safe HID target.
+    /// The original value remains the upper bound and the absolute floor is
+    /// still enforced for devices whose native acceleration is unusually low.
+    static func hardwareAccelerationTarget(
+        original: Double,
+        sensitivity: CGFloat,
+        minimumAcceleration: Double = HeavyCursorConstants.minimumHardwareAcceleration
+    ) -> Double? {
+        guard original.isFinite, original > 0,
+              sensitivity.isFinite,
+              minimumAcceleration.isFinite, minimumAcceleration > 0 else { return nil }
+        let clamped = max(0, min(1, sensitivity))
+        let scaled = original * Double(clamped)
+        return min(original, max(minimumAcceleration, scaled))
+    }
+
     static func hardwareAccelerationTarget(
         original: Double,
         weight: CGFloat,
@@ -181,8 +251,9 @@ enum WeightCurve {
     }
 
     /// The comet is the app's always-visible heartbeat once a real work
-    /// session starts. Keep it subtle during the physically weightless half,
-    /// then let the physical weight curve take over continuously.
+    /// session starts. It remains subtle at first and grows continuously as
+    /// the deadline approaches; this visual curve is intentionally independent
+    /// from the physical sensitivity timeline.
     static func visualWeight(elapsed: TimeInterval, interval: TimeInterval) -> CGFloat {
         guard interval > 0 else { return 0 }
         let progress = CGFloat(max(0, min(1, elapsed / interval)))

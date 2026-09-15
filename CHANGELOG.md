@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Change physical weighting to a clear two-stage transition: native response
+  until the final ten minutes, a smooth 100% to 50% work ramp, then an
+  immediate 10% sensitivity switch when the break starts.
 - Remove the global pointer event tap, cursor warping, and mouse/cursor
   disassociation path entirely. Physical weighting now uses only verified HID
   acceleration changes, so native movement, clicks, dragging, and cursor

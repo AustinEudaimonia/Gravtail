@@ -82,7 +82,7 @@ final class HIDAccelerationController {
     private let handle: HIDHandle
     private var originalMouse: Double?
     private var originalTrackpad: Double?
-    private var lastWeight: CGFloat = -1
+    private var lastSensitivity: CGFloat = -1
     private var lastMinimumAcceleration: Double = -1
     private(set) var isActive = false
     private(set) var lastOperationSucceeded = true
@@ -135,8 +135,21 @@ final class HIDAccelerationController {
         (originalMouse, originalTrackpad)
     }
 
+    /// Compatibility entry point for callers that still have the old visual
+    /// weight value. New physical weighting should pass an explicit
+    /// sensitivity so the work-to-break transition is unambiguous.
     func update(
         weight: CGFloat,
+        minimumAcceleration: Double = HeavyCursorConstants.minimumHardwareAcceleration
+    ) {
+        update(
+            sensitivity: WeightCurve.hardwareScale(for: weight),
+            minimumAcceleration: minimumAcceleration
+        )
+    }
+
+    func update(
+        sensitivity: CGFloat,
         minimumAcceleration: Double = HeavyCursorConstants.minimumHardwareAcceleration
     ) {
         guard !isSafetyDisabled else { return }
@@ -149,13 +162,17 @@ final class HIDAccelerationController {
             compatibility = .systemAPIUnavailable
             return
         }
-        let clamped = max(0, min(1, weight))
+        guard sensitivity.isFinite else {
+            _ = restore()
+            return
+        }
+        let clamped = max(0, min(1, sensitivity))
         guard minimumAcceleration.isFinite, minimumAcceleration > 0 else {
             _ = restore()
             return
         }
 
-        if clamped <= 0.005 {
+        if clamped <= 0.005 || clamped >= HeavyCursorConstants.sensitivityActivationThreshold {
             _ = restore()
             return
         }
@@ -174,10 +191,9 @@ final class HIDAccelerationController {
             compatibility = .deviceSettingsUnavailable
             return
         }
-        // The break changes the acceleration floor while the weight remains
-        // at 1.0. Include the floor in the cache key so that transition is
+        // Include the floor in the cache key so a work-to-break transition is
         // applied immediately instead of being skipped as a duplicate tick.
-        guard abs(lastWeight - clamped) > 0.005
+        guard abs(lastSensitivity - clamped) > 0.005
                 || abs(lastMinimumAcceleration - minimumAcceleration) > 0.0001 else { return }
 
         var changed: [(key: CFString, value: Double)] = []
@@ -185,12 +201,12 @@ final class HIDAccelerationController {
         // A zero or negative acceleration value is not a safe weighting
         // target on every macOS/input-device combination. Leave an already
         // non-positive setting untouched; otherwise preserve at least the
-        // product's requested minimum response (10% while working, 5% during
-        // the break). Never write zero or a negative value.
+        // product's absolute response floor. Never write zero or a negative
+        // value.
         if let originalMouse,
            let target = WeightCurve.hardwareAccelerationTarget(
                original: originalMouse,
-               weight: clamped,
+               sensitivity: clamped,
                minimumAcceleration: minimumAcceleration
            ) {
             changed.append((Key.mouse, originalMouse))
@@ -202,7 +218,7 @@ final class HIDAccelerationController {
         if let originalTrackpad,
            let target = WeightCurve.hardwareAccelerationTarget(
                original: originalTrackpad,
-               weight: clamped,
+               sensitivity: clamped,
                minimumAcceleration: minimumAcceleration
            ) {
             changed.append((Key.trackpad, originalTrackpad))
@@ -229,7 +245,7 @@ final class HIDAccelerationController {
         lastOperationSucceeded = true
         lastRollbackSucceeded = true
         isActive = true
-        lastWeight = clamped
+        lastSensitivity = clamped
         lastMinimumAcceleration = minimumAcceleration
     }
 
@@ -248,12 +264,12 @@ final class HIDAccelerationController {
             if defaults.bool(forKey: Key.hasBackup) {
                 restoreOrphanedBackupIfNeeded()
                 isActive = false
-                lastWeight = -1
+                lastSensitivity = -1
                 lastMinimumAcceleration = -1
                 return didRestoreOrphanedBackup
             }
             isActive = false
-            lastWeight = -1
+            lastSensitivity = -1
             lastMinimumAcceleration = -1
             lastOperationSucceeded = true
             lastRollbackSucceeded = true
@@ -262,7 +278,7 @@ final class HIDAccelerationController {
         var success = true
         if let originalMouse { success = write(Key.mouse, originalMouse) && success }
         if let originalTrackpad { success = write(Key.trackpad, originalTrackpad) && success }
-        lastWeight = -1
+        lastSensitivity = -1
         lastMinimumAcceleration = -1
         isActive = false
         lastOperationSucceeded = success
@@ -286,7 +302,7 @@ final class HIDAccelerationController {
         for change in changed.reversed() {
             rollbackSucceeded = write(change.key, change.value) && rollbackSucceeded
         }
-        lastWeight = -1
+        lastSensitivity = -1
         lastMinimumAcceleration = -1
         isActive = false
         lastRollbackSucceeded = rollbackSucceeded

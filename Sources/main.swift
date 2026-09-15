@@ -426,11 +426,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
         }
 
+        let physicalSensitivity = currentPhysicalSensitivity
         let weightingMode: CursorWeightingMode = clock.isPaused
             ? .none
             : CursorWeightingPolicy.mode(
                 isUIPreview: isUIPreview,
-                weight: clock.weight,
+                sensitivity: physicalSensitivity,
                 isPhysicalWeightingEnabled: physicalWeightingEnabled && !sessionSafetyDisabled
             )
 
@@ -446,7 +447,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     ? HeavyCursorConstants.breakMinimumHardwareAcceleration
                     : HeavyCursorConstants.minimumHardwareAcceleration
                 hidAccelerationController.update(
-                    weight: clock.weight,
+                    sensitivity: physicalSensitivity,
                     minimumAcceleration: minimumAcceleration
                 )
             }
@@ -474,6 +475,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var activeVisualWeight: CGFloat {
         guard hasStartedWorkSession, !clock.isAway else { return 0 }
         return WeightCurve.visualWeight(elapsed: clock.elapsed, interval: clock.interval)
+    }
+
+    /// Physical sensitivity intentionally has a different timeline from the
+    /// comet. Work remains native for most of the interval, eases to 50% only
+    /// in the final ten minutes, then drops to 10% at the break boundary.
+    private var currentPhysicalSensitivity: CGFloat {
+        guard hasStartedWorkSession, !clock.isAway else { return 1 }
+        if clock.isOnBreak {
+            return HeavyCursorConstants.breakSensitivity
+        }
+        return WeightCurve.workSensitivity(
+            elapsed: clock.elapsed,
+            interval: clock.interval,
+            rampDuration: HeavyCursorConstants.workSensitivityRampDuration,
+            minimumSensitivity: HeavyCursorConstants.workSensitivityFloor
+        )
     }
 
     private func renderTick() {
@@ -1107,7 +1124,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             phase = "away"
         } else if clock.isOnBreak {
             phase = "break"
-        } else if clock.weight > HeavyCursorConstants.physicalWeightActivationThreshold {
+        } else if currentPhysicalSensitivity < HeavyCursorConstants.sensitivityActivationThreshold {
             phase = "weighting"
         } else {
             phase = "early-work"
@@ -1129,6 +1146,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             "hidCompatibility": hidAccelerationController.compatibility.rawValue,
             "elapsedSeconds": String(Int(clock.elapsed)),
             "physicalWeight": String(format: "%.3f", Double(clock.weight)),
+            "physicalSensitivity": String(format: "%.3f", Double(currentPhysicalSensitivity)),
             "visualWeight": String(format: "%.3f", Double(activeVisualWeight)),
         ])
     }
