@@ -63,29 +63,6 @@ struct RestoreBackoff {
     }
 }
 
-enum MenuBarFallbackPolicy {
-    /// A fallback launcher is allowed only when the menu bar itself is
-    /// present and macOS did not give the native status item a real window.
-    /// A hidden menu bar must remain hidden instead of being bypassed by an
-    /// always-on-top panel.
-    static let minimumMenuBarHeight: CGFloat = 18
-
-    static func shouldUseFallback(
-        menuBarHeight: CGFloat,
-        nativeWindowHeight: CGFloat?,
-        nativeWindowOnScreen: Bool = true,
-        nativeButtonClipped: Bool = false
-    ) -> Bool {
-        guard menuBarHeight >= minimumMenuBarHeight else { return false }
-        guard let nativeWindowHeight else { return true }
-        return nativeWindowHeight < minimumMenuBarHeight || !nativeWindowOnScreen || nativeButtonClipped
-    }
-
-    static func shouldReprobeNative(hasFallback: Bool, menuBarHeight: CGFloat) -> Bool {
-        hasFallback && menuBarHeight >= minimumMenuBarHeight
-    }
-}
-
 enum LoginItemPromptPolicy {
     /// The app explains manual login-item setup only after the first-run
     /// Gravtail choices are complete, and records that the explanation was
@@ -174,7 +151,7 @@ enum RecoveryNoticePolicy {
 enum WeightCurve {
     /// Keep the work-phase comet present but understated. The break is the
     /// only state that is allowed to render at full visual strength.
-    static let workVisualMaximum: CGFloat = 0.65
+    static let workVisualMaximum: CGFloat = 0.35
 
     /// The first half of a session stays visually quiet. The second half eases
     /// continuously from weightless to fully heavy.
@@ -265,7 +242,7 @@ enum WeightCurve {
         // intentionally preserved. Before that boundary, cap the comet so it
         // does not compete with the user's work even as the deadline nears.
         guard progress < 1 else { return 1 }
-        let ambientComet = 0.12 + 0.08 * progress
+        let ambientComet = 0.04 + 0.03 * progress
         let weightedComet = workVisualMaximum * weight(elapsed: elapsed, interval: interval)
         return max(ambientComet, min(workVisualMaximum, weightedComet))
     }

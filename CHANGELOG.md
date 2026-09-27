@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Keep the work-phase comet visually restrained with a 65% ceiling while
+- Keep the work-phase comet visually restrained with a 35% ceiling while
   preserving full visual strength during the break.
 - Change physical weighting to a clear two-stage transition: native response
   until the final ten minutes, a smooth 100% to 50% work ramp, then an
@@ -20,8 +20,8 @@
 - Remove the duplicate status-bar-level floating launcher. Gravtail now owns
   exactly one macOS-managed `NSStatusItem`, preventing icon ghosting and
   overlap near the camera notch or clock.
-- Add an exclusive fallback only when a visible menu bar has not attached the
-  native status item; never keep both menu-bar owners at the same time.
+- Use the native square status-item slot with a stable autosave name. Gravtail
+  no longer replaces the native item based on transient menu-bar geometry.
 
 ## 0.4.23
 

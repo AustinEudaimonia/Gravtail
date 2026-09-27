@@ -46,8 +46,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private var statusItem: NSStatusItem?
-    private var fallbackProductIconPanel: NSPanel?
-    private var menuBarFallbackCheckWorkItem: DispatchWorkItem?
     private var overlayWindows: [NSWindow] = []
     private var renderTimer: Timer?
     private var logicTimer: Timer?
@@ -93,7 +91,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         hidAccelerationControllerStorage = HIDAccelerationController()
         NSApp.setActivationPolicy(isUIPreview ? .regular : .accessory)
         setUpMenuBarIcon()
-        scheduleMenuBarFallbackCheck()
         if !isUIPreview {
             rebuildOverlayWindows()
         }
@@ -548,8 +545,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func screensChanged() {
         rebuildOverlayWindows()
         breakReminder.screenConfigurationChanged()
-        positionFallbackProductIconPanel()
-        scheduleMenuBarFallbackCheck()
     }
 
     @objc private func systemWillSleep() {
@@ -620,7 +615,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Use the approved Gravtail artwork itself as the status-bar mark.
         // Keeping the product mark here makes the menu-bar entry recognizable
         // even when the app is running without a Dock icon or settings window.
-        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        // NSStatusBar does not retain status items. Keep a stable autosave name
+        // so macOS can preserve this item's placement across launches and
+        // display-configuration changes.
+        item.autosaveName = "com.austin.gravtail.status-item"
         if let button = item.button {
             let image = HeavyCursorIconRenderer.makeMenuBarImage(size: NSSize(width: 22, height: 22))
             image.isTemplate = false
@@ -637,10 +636,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let menu = NSMenu()
         menu.delegate = self
         item.menu = menu
-        // Reserve a concrete square slot for the artwork. Some macOS builds
-        // keep image-only variable-length items in the hidden status-menu
-        // group even though the button object reports as visible.
-        item.length = 28
         item.isVisible = true
         statusItem = item
         DiagnosticLog.shared.record("menu-bar-item-ready", fields: [
@@ -651,142 +646,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             "buttonFrame": item.button.map { NSStringFromRect($0.frame) } ?? "nil",
             "windowFrame": item.button?.window.map { NSStringFromRect($0.frame) } ?? "nil",
         ])
-    }
-
-    /// macOS can report an NSStatusItem as visible while keeping its backing
-    /// window at zero height (for example in a crowded or notch-constrained
-    /// menu bar). Give the system a chance to lay it out, then use exactly one
-    /// fallback owner only when the menu bar is visible and the native item is
-    /// still not attached to a real window.
-    private func scheduleMenuBarFallbackCheck() {
-        guard !isUIPreview else { return }
-        menuBarFallbackCheckWorkItem?.cancel()
-        let workItem = DispatchWorkItem { [weak self] in
-            self?.evaluateMenuBarEntry()
-        }
-        menuBarFallbackCheckWorkItem = workItem
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.75, execute: workItem)
-    }
-
-    private func evaluateMenuBarEntry() {
-        guard !isUIPreview,
-              let screen = NSScreen.main ?? NSScreen.screens.first else { return }
-
-        // A fallback can be created while the native status item is still
-        // waiting for WindowServer layout. Re-probe the native owner after a
-        // display/full-screen transition, so the fallback cannot become a
-        // permanent second icon or remain in a stale position.
-        if let fallback = fallbackProductIconPanel {
-            let menuBarHeight = screen.frame.maxY - screen.visibleFrame.maxY
-            let shouldReprobe = MenuBarFallbackPolicy.shouldReprobeNative(
-                hasFallback: true,
-                menuBarHeight: menuBarHeight
-            )
-            if shouldReprobe || menuBarHeight < MenuBarFallbackPolicy.minimumMenuBarHeight {
-                fallback.orderOut(nil)
-                fallbackProductIconPanel = nil
-                // Keep the menu bar hidden when macOS hides it; restore the
-                // native owner so it can become visible again when the bar
-                // returns.
-                setUpMenuBarIcon()
-                // Give WindowServer time to attach the status item before
-                // measuring its backing window. Evaluating immediately here
-                // would see a transient nil/zero frame and recreate the
-                // fallback we just removed.
-                scheduleMenuBarFallbackCheck()
-                return
-            }
-        }
-
-        guard let item = statusItem else { return }
-
-        let menuBarHeight = screen.frame.maxY - screen.visibleFrame.maxY
-        let nativeWindowHeight = item.button?.window?.frame.height
-        let nativeButtonClipped = item.button.map { button in
-            button.visibleRect.minX < 0 || button.visibleRect.minY < 0
-        } ?? true
-        let needsFallback = MenuBarFallbackPolicy.shouldUseFallback(
-            menuBarHeight: menuBarHeight,
-            nativeWindowHeight: nativeWindowHeight,
-            nativeWindowOnScreen: item.button?.window?.screen != nil,
-            nativeButtonClipped: nativeButtonClipped
-        )
-        DiagnosticLog.shared.record("menu-bar-entry-evaluated", fields: [
-            "menuBarHeight": String(format: "%.0f", menuBarHeight),
-            "nativeWindowHeight": nativeWindowHeight.map { String(format: "%.0f", $0) } ?? "nil",
-            "nativeWindowVisible": item.button?.window?.isVisible == true ? "true" : "false",
-            "nativeWindowScreen": item.button?.window?.screen == nil ? "nil" : "present",
-            "buttonHidden": item.button?.isHiddenOrHasHiddenAncestor == true ? "true" : "false",
-            "buttonVisibleRect": item.button.map { NSStringFromRect($0.visibleRect) } ?? "nil",
-            "buttonClipped": nativeButtonClipped ? "true" : "false",
-            "buttonImage": item.button?.image == nil ? "nil" : "present",
-            "fallback": needsFallback ? "true" : "false",
-        ])
-        guard needsFallback else { return }
-
-        // Remove the system-owned item before creating the panel. This is the
-        // invariant that prevents the local fallback from overlapping a native
-        // icon on another Mac.
-        NSStatusBar.system.removeStatusItem(item)
-        statusItem = nil
-        setUpFallbackProductIconPanel()
-    }
-
-    private func setUpFallbackProductIconPanel() {
-        guard fallbackProductIconPanel == nil else { return }
-
-        let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 28, height: 28),
-            styleMask: [.borderless, .nonactivatingPanel],
-            backing: .buffered,
-            defer: false
-        )
-        panel.isOpaque = false
-        panel.backgroundColor = .clear
-        panel.hasShadow = false
-        panel.level = .statusBar
-        panel.hidesOnDeactivate = false
-        panel.becomesKeyOnlyIfNeeded = true
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
-        panel.isReleasedWhenClosed = false
-
-        let button = NSButton(frame: NSRect(x: 2, y: 2, width: 24, height: 24))
-        button.isBordered = false
-        button.focusRingType = .none
-        button.image = HeavyCursorIconRenderer.makeMenuBarImage(size: NSSize(width: 22, height: 22))
-        button.imageScaling = .scaleProportionallyDown
-        button.imagePosition = .imageOnly
-        button.toolTip = "Gravtail · 点击打开设置"
-        button.setAccessibilityLabel("打开 Gravtail 设置")
-        button.target = self
-        button.action = #selector(fallbackProductIconClicked)
-        panel.contentView = button
-
-        fallbackProductIconPanel = panel
-        positionFallbackProductIconPanel()
-        panel.orderFrontRegardless()
-        DiagnosticLog.shared.record("menu-bar-fallback-ready", fields: [
-            "frame": NSStringFromRect(panel.frame),
-        ])
-    }
-
-    private func positionFallbackProductIconPanel() {
-        guard let panel = fallbackProductIconPanel,
-              let screen = NSScreen.main ?? NSScreen.screens.first else { return }
-
-        let menuBarHeight = max(22, screen.frame.maxY - screen.visibleFrame.maxY)
-        let panelSize = panel.frame.size
-        let displayNumber = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber
-        let displayID = displayNumber.map { CGDirectDisplayID($0.uint32Value) }
-        let isBuiltInDisplay = displayID.map { CGDisplayIsBuiltin($0) != 0 } ?? false
-        let notchClearance: CGFloat = isBuiltInDisplay ? 96 : 0
-        let x = screen.frame.midX - panelSize.width / 2 - notchClearance
-        let y = screen.frame.maxY - menuBarHeight + (menuBarHeight - panelSize.height) / 2
-        panel.setFrameOrigin(NSPoint(x: x, y: y))
-    }
-
-    @objc private func fallbackProductIconClicked() {
-        showSettingsWindow()
     }
 
     func menuNeedsUpdate(_ menu: NSMenu) {

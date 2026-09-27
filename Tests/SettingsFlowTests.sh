@@ -22,11 +22,14 @@ grep -Fq 'reminderSoundPlayer.play(.breakEnded)' "$SOURCE" || fail "break comple
 grep -Fq 'pointerController' "$SOURCE" && fail "settings must not depend on a global pointer event tap"
 grep -Fq '辅助功能权限' "$SOURCE" && fail "hardware-only weighting must not request Accessibility permission"
 
-# The menu-bar entry must have one owner at a time. A status-bar-level NSPanel
-# is allowed only as a delayed fallback after the native item is removed.
-grep -Fq 'MenuBarFallbackPolicy.shouldUseFallback' "$SOURCE" || fail "menu bar fallback must use the hidden-menu-bar policy"
-grep -Fq 'NSStatusBar.system.removeStatusItem(item)' "$SOURCE" || fail "fallback must remove the native status item first"
-grep -Fq 'fallbackProductIconPanel' "$SOURCE" || fail "fallback panel needs an explicit single-owner state"
+# The formal app must use one macOS-managed status item. It must never replace
+# that item with a floating panel based on transient geometry values.
+grep -Fq 'NSStatusItem.squareLength' "$SOURCE" || fail "formal menu bar item must use the native square length"
+grep -Fq 'item.autosaveName' "$SOURCE" || fail "formal menu bar item needs a stable autosave name"
+grep -Fq 'statusItem = item' "$SOURCE" || fail "formal app must retain the native status item"
+grep -Fq 'fallbackProductIconPanel' "$SOURCE" && fail "formal app must not create a floating menu bar fallback"
+grep -Fq 'MenuBarFallbackPolicy' "$SOURCE" && fail "formal app must not infer menu bar visibility from transient geometry"
+grep -Fq 'NSStatusBar.system.removeStatusItem(item)' "$SOURCE" && fail "formal app must not remove its native status item during startup"
 
 confirm_body="$(sed -n '/@objc private func confirmSettings()/,/^    }/p' "$SOURCE")"
 print -r -- "$confirm_body" | grep -Fq 'settingsWindow?.orderOut(nil)' || fail "confirm must only collapse the settings window"

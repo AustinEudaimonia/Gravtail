@@ -17,10 +17,10 @@ enum HeavyCursorCoreTests {
         expect(abs(WeightCurve.weight(elapsed: 45 * 60, interval: interval) - 0.5) < 0.001, "three quarters is half weight")
         expect(WeightCurve.weight(elapsed: interval, interval: interval) == 1, "deadline reaches full weight")
         expect(abs(WeightCurve.pointerGain(for: 1) - 0.10) < 0.001, "full weight caps at 10 percent gain")
-        expect(WeightCurve.visualWeight(elapsed: 0, interval: interval) >= 0.12, "started session has a visible comet immediately")
+        expect(WeightCurve.visualWeight(elapsed: 0, interval: interval) <= 0.05, "started session has only a barely visible comet")
         expect(
-            WeightCurve.workVisualMaximum < 1,
-            "work comet intensity stays below full strength"
+            abs(WeightCurve.workVisualMaximum - 0.35) < 0.001,
+            "work comet intensity uses the restrained 35 percent ceiling"
         )
         expect(
             WeightCurve.visualWeight(elapsed: interval - 1, interval: interval)
@@ -109,19 +109,6 @@ enum HeavyCursorCoreTests {
         restoreBackoff.reset()
         expect(restoreBackoff.shouldAttempt(now: 103), "successful restore clears the backoff")
 
-        expect(
-            MenuBarFallbackPolicy.shouldReprobeNative(hasFallback: true, menuBarHeight: 22),
-            "a visible fallback should be rechecked after display changes"
-        )
-        expect(
-            !MenuBarFallbackPolicy.shouldReprobeNative(hasFallback: false, menuBarHeight: 22),
-            "native ownership should not be probed when no fallback exists"
-        )
-        expect(
-            !MenuBarFallbackPolicy.shouldReprobeNative(hasFallback: true, menuBarHeight: 0),
-            "a hidden menu bar must not create a visible fallback"
-        )
-
         let breakClock = SessionClock(interval: 60, breakDuration: 300)
         breakClock.reset(startingAt: 0)
         _ = breakClock.tick(now: 60, idleTime: 0)
@@ -195,36 +182,6 @@ enum HeavyCursorCoreTests {
             "diagnostic logs rotate at the size limit"
         )
         expect(MaintenancePolicy.installerBackupsToKeep == 1, "installer keeps one rollback copy")
-        expect(
-            !MenuBarFallbackPolicy.shouldUseFallback(menuBarHeight: 0, nativeWindowHeight: 0),
-            "a hidden menu bar must not be bypassed by a floating launcher"
-        )
-        expect(
-            MenuBarFallbackPolicy.shouldUseFallback(menuBarHeight: 24, nativeWindowHeight: nil),
-            "a visible menu bar with no native status window needs the fallback"
-        )
-        expect(
-            MenuBarFallbackPolicy.shouldUseFallback(menuBarHeight: 24, nativeWindowHeight: 0),
-            "a visible menu bar with a zero-height native window needs the fallback"
-        )
-        expect(
-            !MenuBarFallbackPolicy.shouldUseFallback(menuBarHeight: 24, nativeWindowHeight: 22),
-            "a real native status window must suppress the fallback"
-        )
-        expect(
-            MenuBarFallbackPolicy.shouldUseFallback(
-                menuBarHeight: 24, nativeWindowHeight: 22, nativeWindowOnScreen: false
-            ),
-            "a detached native window must use the fallback even when its height looks valid"
-        )
-        expect(
-            MenuBarFallbackPolicy.shouldUseFallback(
-                menuBarHeight: 24, nativeWindowHeight: 22,
-                nativeWindowOnScreen: true, nativeButtonClipped: true
-            ),
-            "a clipped native button must use the fallback"
-        )
-
         for restored in [false, true] {
             for hardwareActive in [false, true] {
                 for watchdogRunning in [false, true] {
