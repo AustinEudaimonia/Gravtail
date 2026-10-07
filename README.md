@@ -116,6 +116,10 @@ retrying live input.
 open ".build/Gravtail.app"
 ```
 
+如果 `dist/` 中已有唯一的 `Gravtail-<version>-macOS.zip`，`./test.sh`
+会自动执行安装替换与回滚集成测试；也可以显式指定归档：
+`GRAVTAIL_INSTALLER_ARCHIVE=/path/to/Gravtail-0.4.24-macOS.zip ./test.sh`。
+
 The comet works as soon as the first physical input starts a session. Physical
 weighting uses one hardware-acceleration path and does not require Accessibility
 permission. Gravtail does not install a global event tap, suppress input,

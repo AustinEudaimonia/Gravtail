@@ -23,7 +23,10 @@ ensure_code_signing_trust() {
 }
 
 if security find-identity -p codesigning -v 2>/dev/null | grep -Fq "\"${IDENTITY_NAME}\""; then
-  # Already a valid identity: do not look up/trust an arbitrary same-name cert.
+  # The identity may still be listed while its code-signing trust has drifted.
+  # Repair the exact named certificate before reusing it; never trust an
+  # arbitrary same-name certificate selected from the keychain.
+  ensure_code_signing_trust
   security find-identity -p codesigning -v | /bin/zsh "${0:A:h}/select-signing-identity.sh" "${IDENTITY_NAME}" >/dev/null
   print "Using existing code-signing identity: ${IDENTITY_NAME}"
   print "Verified user-level code-signing trust for: ${IDENTITY_NAME}"

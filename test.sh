@@ -39,6 +39,7 @@ swiftc -swift-version 5 -warnings-as-errors \
 /bin/zsh "$PROJECT_DIR/Tests/SettingsFlowTests.sh"
 /bin/zsh "$PROJECT_DIR/Tests/AccessibilityDiagnosticTests.sh"
 /bin/zsh "$PROJECT_DIR/Tests/ReminderVisibilityTests.sh"
+/bin/zsh "$PROJECT_DIR/Tests/TestHarnessTests.sh"
 
 for arch in arm64 x86_64; do
   swiftc \
@@ -61,6 +62,7 @@ zsh -n \
   "$PROJECT_DIR/Tests/SettingsFlowTests.sh" \
   "$PROJECT_DIR/Tests/AccessibilityDiagnosticTests.sh" \
   "$PROJECT_DIR/Tests/ReminderVisibilityTests.sh" \
+  "$PROJECT_DIR/Tests/TestHarnessTests.sh" \
   "$PROJECT_DIR/Tests/InstallerIntegrationTests.sh"
 
 if grep -R -q '@_silgen_name' "$PROJECT_DIR/Sources"; then
@@ -81,6 +83,30 @@ backup_names=("${(@On)backup_names}")
 if [[ "${backup_names[1]}" != *20260102* ]]; then
   print -u2 "FAIL: newest installer backup must sort first"
   exit 1
+fi
+
+# Run the package-level install/rollback check whenever a signed community
+# archive is available. CI source checkouts usually have no release archive,
+# so they keep the source-only suite while local release work gets the full
+# installer coverage. An explicit path takes precedence over auto-discovery.
+installer_archive="${GRAVTAIL_INSTALLER_ARCHIVE:-}"
+if [[ -z "${installer_archive}" ]]; then
+  setopt null_glob
+  installer_archives=("${PROJECT_DIR}"/dist/Gravtail-*-macOS.zip(N))
+  if (( ${#installer_archives[@]} == 1 )); then
+    installer_archive="${installer_archives[1]}"
+  elif (( ${#installer_archives[@]} > 1 )); then
+    print "Installer integration skipped: multiple archives found; set GRAVTAIL_INSTALLER_ARCHIVE explicitly."
+  fi
+fi
+if [[ -n "${installer_archive}" ]]; then
+  [[ -f "${installer_archive}" ]] || {
+    print -u2 "FAIL: installer archive not found: ${installer_archive}"
+    exit 1
+  }
+  /bin/zsh "$PROJECT_DIR/Tests/InstallerIntegrationTests.sh" "${installer_archive}"
+else
+  print "Installer integration skipped: no Gravtail-<version>-macOS.zip found."
 fi
 
 print "Project checks passed"
