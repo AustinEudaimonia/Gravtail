@@ -107,5 +107,5 @@ if ! security find-identity -p codesigning -v 2>/dev/null | grep -Fq "\"${IDENTI
 fi
 
 print "Created code-signing identity in the login keychain: ${IDENTITY_NAME}"
-print "Keep this exact certificate and private key unchanged so macOS can preserve Accessibility approval across updates."
+print "Keep this exact certificate and private key unchanged so macOS can preserve the app's local signing identity across updates."
 print "The identity name alone is not portable; another Mac must import this same certificate and private key."

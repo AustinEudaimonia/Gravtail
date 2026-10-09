@@ -9,7 +9,7 @@
 <p align="center"><strong>工作越久，鼠标越重；起身走一会，它才恢复。</strong></p>
 
 <p align="center">
-  <a href="https://github.com/AustinEudaimonia/Gravtail/releases/latest">下载 macOS 版</a>
+  <a href="https://github.com/AustinEudaimonia/Gravtail/releases/latest">下载 macOS 版（v0.4.24）</a>
   ·
   <a href="COMMUNITY_INSTALL.md">查看安装说明</a>
   ·
@@ -49,7 +49,7 @@ Gravtail 是一个轻量的 macOS 菜单栏应用。它不靠突然弹出的系�
 | 达到设定时间 | 顶部居中的小胶囊提示起身，comet 开到 100% | 瞬间降到 10%，并保留安全响应下限 |
 | 完成休息 | 清除 comet；确认恢复后显示完成提示 | 立即尝试恢复本轮加重前保存的原始设置 |
 
-你可以选择 **45 / 60 / 90 分钟**的连续使用时间，以及 **3 / 5 / 10 分钟**的休息时长。应用启动或重置后，会等到第一次真实的键盘/鼠标输入才开始计时；工作阶段不会因为几分钟没有输入而自动把本轮归零。每 15 分钟，屏幕上方会出现一个短暂的小胶囊，告诉你距离起身还剩多久；到点后胶囊会显示休息倒计时。休息阶段的键盘或鼠标输入会重新开始休息倒计时，完整休息后进入下一轮。
+你可以选择 **45 / 60 / 90 分钟**的连续使用时间，以及 **3 / 5 / 10 分钟**的休息时长。应用启动或重置后，会等到第一次真实的键盘/鼠标输入才开始计时；工作阶段不会因为几分钟没有输入而自动把本轮归零。每 15 分钟，屏幕上方会出现一个短暂的小胶囊，告诉你距离起身还剩多久；到点后胶囊会显示休息倒计时。休息阶段的键盘或鼠标输入会重新开始休息倒计时，完整休息后等待下一次真实输入再开始新一轮。
 
 每个进度胶囊、进入休息和休息完成都会播放一次短促的 macOS 内置音效；设置中可以关闭提醒音效，关闭后仍保留所有视觉提醒。
 
@@ -90,12 +90,12 @@ A deliberately small macOS menu bar app: the longer you use your Mac, the heavie
 - During the final ten minutes, the comet grows within a restrained 35% visual ceiling while pointer response eases from native sensitivity to 50%; when the break begins, the pointer switches immediately to 10% and the comet reaches full strength.
 - Every 15 minutes, a four-second pill reports how long remains before it is time to move.
 - Progress pills, break start, and break completion each play one short built-in macOS sound; sounds can be disabled without removing the visual reminders.
-- At the selected limit, the pill stays visible with a live break countdown and Quit action.
+- At the selected limit, the pill stays visible with a live break countdown and Skip/Pause controls.
 - During that break countdown, the native pointer remains fully usable (including text I-beam hit testing) while the system acceleration stays reduced; keyboard or pointer input simply restarts the countdown.
 - Pills sit at the upper center of the main screen, below the menu bar and away from bottom-center voice tools such as Typeless.
 - A single small Gravtail comet/cursor icon is provided by one native macOS status item. It opens work and break settings, Reset Session, and Quit; macOS controls its placement and can move it with Command-drag. If macOS 26 or later hides third-party status items, allow Gravtail in System Settings → Menu Bar.
 - The first physical keyboard or pointer input starts a new work session; any keyboard or pointer input restarts the break countdown.
-- Completing the break restores the original pointer response and starts a new session.
+- Completing the break restores the original pointer response; the next work session starts with the first real physical input.
 - Reset or quit at any time from the menu bar.
 
 ## Build and run

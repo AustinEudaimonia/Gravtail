@@ -314,12 +314,10 @@ final class SessionClock {
             }
         }
 
-        if isAway {
-            isAway = false
-            elapsed = 0
-            dueSince = nil
-            return false
-        }
+        // A completed break stays in the away state until the caller confirms
+        // a fresh physical input. The logic timer must not turn elapsed time
+        // back on merely because another 250 ms tick arrived.
+        if isAway { return false }
 
         let previousElapsed = elapsed
         elapsed += max(0, now - previous)
@@ -328,6 +326,21 @@ final class SessionClock {
             dueSince = previous + timeToDeadline
         }
         return false
+    }
+
+    /// Begin the next work session at a confirmed physical-input timestamp.
+    /// This is deliberately separate from `tick`: a quiet timer tick after a
+    /// completed break must never count as user activity.
+    @discardableResult
+    func resumeAfterInput(startingAt now: TimeInterval) -> Bool {
+        guard isAway, now.isFinite else { return false }
+        isAway = false
+        elapsed = 0
+        dueSince = nil
+        pausedBreakRemaining = nil
+        ignoredBreakInputAt = nil
+        lastTick = now
+        return true
     }
 
     /// Pause only the active break. The countdown is frozen and the caller

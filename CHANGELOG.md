@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.24 - 2026-10-09
 
 - Keep the work-phase comet visually restrained with a 35% ceiling while
   preserving full visual strength during the break.

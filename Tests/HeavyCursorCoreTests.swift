@@ -281,8 +281,27 @@ enum HeavyCursorCoreTests {
         expect(!clock.isOnBreak, "completed break leaves the break state")
         expect(clock.elapsed == 0 && clock.weight == 0, "recovery clears the session")
         expect(clock.isAway, "clock remains away until input resumes")
+        expect(clock.resumeAfterInput(startingAt: 311), "first returning input begins a fresh session")
         _ = clock.tick(now: 311, idleTime: 0)
         expect(!clock.isAway && clock.elapsed == 0, "first returning input begins a fresh session")
+
+        let waitingAfterBreak = SessionClock(interval: 10, breakDuration: 5)
+        waitingAfterBreak.reset(startingAt: 0)
+        _ = waitingAfterBreak.tick(now: 10, idleTime: 0)
+        _ = waitingAfterBreak.tick(now: 16, idleTime: 6)
+        expect(waitingAfterBreak.isAway, "completed break waits for a returning input")
+        _ = waitingAfterBreak.tick(now: 17, idleTime: 7)
+        expect(
+            waitingAfterBreak.isAway && waitingAfterBreak.elapsed == 0,
+            "continued inactivity after a break must not start a new work session"
+        )
+        expect(
+            waitingAfterBreak.resumeAfterInput(startingAt: 18),
+            "a fresh physical input resumes the next work session"
+        )
+        _ = waitingAfterBreak.tick(now: 18, idleTime: 0)
+        expect(!waitingAfterBreak.isAway && waitingAfterBreak.elapsed == 0,
+               "the resumed work session starts at the input timestamp")
 
         let idleWorkClock = SessionClock(interval: 45 * 60, breakDuration: 5 * 60)
         idleWorkClock.reset(startingAt: 0)

@@ -378,6 +378,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
         }
 
+        if !isAnyPreview && !isShowingOnboarding && clock.isAway,
+           hasPhysicalInputSinceBaseline(now: now, idleTime: idleTime),
+           clock.resumeAfterInput(startingAt: now) {
+            sessionInputBaselineUptime = now
+            DiagnosticLog.shared.record("work-session-resumed-after-break")
+        }
+
         let recovered = clock.tick(
             now: now,
             idleTime: idleTime
